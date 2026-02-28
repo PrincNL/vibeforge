@@ -14,15 +14,25 @@ function heuristicCommands(goal: string) {
 
 function getClientIp(req: Request) {
   const forwarded = req.headers.get("x-forwarded-for") || "";
-  return forwarded.split(",")[0]?.trim() || "";
+  const realIp = req.headers.get("x-real-ip") || req.headers.get("cf-connecting-ip") || "";
+  return forwarded.split(",")[0]?.trim() || realIp.trim() || "";
 }
 
 function isTailnetIp(ip: string) {
   return /^100\./.test(ip) || /^fd7a:115c:a1e0:/i.test(ip);
 }
 
+function hostLooksLocal(req: Request) {
+  const host = (req.headers.get("host") || "").toLowerCase();
+  return host.startsWith("localhost") || host.startsWith("127.0.0.1") || host.startsWith("[::1]");
+}
+
 function isLocalIp(ip: string) {
-  return ip === "127.0.0.1" || ip === "::1" || ip === "";
+  return ip === "127.0.0.1" || ip === "::1";
+}
+
+function isRemoteUnknown(req: Request, ip: string) {
+  return !ip && !hostLooksLocal(req);
 }
 
 function authorizedRemote(req: Request) {
@@ -56,10 +66,13 @@ function isRemoteBlocked(req: Request, cfg: ReturnType<typeof loadConfig>, actio
   const ip = getClientIp(req);
 
   if (cfg.modes?.remoteTailnetOnly !== false && !isLocalIp(ip) && !isTailnetIp(ip)) {
+    if (isRemoteUnknown(req, ip)) {
+      return NextResponse.json({ ok: false, message: `${action} blocked: client IP missing on non-local host.` }, { status: 403 });
+    }
     return NextResponse.json({ ok: false, message: `${action} blocked: non-tailnet remote request.` }, { status: 403 });
   }
 
-  if (!isLocalIp(ip) && !authorizedRemote(req)) {
+  if ((!isLocalIp(ip) || isRemoteUnknown(req, ip)) && !authorizedRemote(req)) {
     return NextResponse.json({ ok: false, message: `${action} blocked: remote token invalid or missing.` }, { status: 401 });
   }
 
@@ -71,6 +84,9 @@ export async function GET(req: Request) {
   const ip = getClientIp(req);
 
   if (cfg.modes?.remoteTailnetOnly !== false && !isLocalIp(ip) && !isTailnetIp(ip)) {
+    if (isRemoteUnknown(req, ip)) {
+      return NextResponse.json({ ok: false, message: "Autonomy status blocked: client IP missing on non-local host." }, { status: 403 });
+    }
     return NextResponse.json({ ok: false, message: "Autonomy status blocked: non-tailnet remote request." }, { status: 403 });
   }
 
