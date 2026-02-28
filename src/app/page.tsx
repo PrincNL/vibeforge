@@ -63,7 +63,8 @@ export default function Home() {
 
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [prompt, setPrompt] = useState("");
-  const [model, setModel] = useState("gpt-4o-mini");
+  const [model] = useState("gpt-5.3-codex");
+  const [reasoning, setReasoning] = useState<"off" | "low" | "medium" | "high">("low");
   const [apiKey, setApiKey] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -86,8 +87,8 @@ export default function Home() {
     return match?.[1] || "// No code block found yet";
   }, [messages]);
 
-  async function refreshSetup() {
-    setSetupLoading(true);
+  async function refreshSetup(showLoader = false) {
+    if (showLoader) setSetupLoading(true);
     try {
       const res = await fetch("/api/setup/status", { cache: "no-store" });
       const data = await res.json();
@@ -105,7 +106,7 @@ export default function Home() {
       setAutonomousRisk(data.modes?.autonomousRiskLevel || "safe");
       setAllowCommandExecution(Boolean(data.modes?.allowCommandExecution));
     } finally {
-      setSetupLoading(false);
+      if (showLoader) setSetupLoading(false);
     }
   }
 
@@ -163,7 +164,7 @@ export default function Home() {
           "content-type": "application/json",
           ...(apiKey ? { "x-openai-key": apiKey } : {}),
         },
-        body: JSON.stringify({ model, messages: next }),
+        body: JSON.stringify({ model, reasoning, messages: next }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
@@ -251,11 +252,13 @@ export default function Home() {
     }
     if (data.status === "success") {
       setDeviceMessage("Connected successfully.");
-      await refreshSetup();
+      setDeviceSessionId("");
+      await refreshSetup(false);
       return;
     }
     if (data.status === "failed" || data.status === "timeout") {
       setDeviceMessage(data.error || "Connection failed, try again");
+      setDeviceSessionId("");
       return;
     }
     setDeviceCode(data.code || deviceCode);
@@ -275,7 +278,7 @@ export default function Home() {
   }
 
   useEffect(() => {
-    refreshSetup();
+    refreshSetup(true);
   }, []);
 
   useEffect(() => {
@@ -292,7 +295,7 @@ export default function Home() {
     if (!deviceSessionId) return;
     const t = setInterval(() => {
       checkDeviceConnect();
-    }, 2000);
+    }, 3000);
     return () => clearInterval(t);
   }, [deviceSessionId]);
 
@@ -391,13 +394,22 @@ export default function Home() {
             <div className="rounded-lg border border-zinc-800 px-3 py-2 text-zinc-400">GitHub queue</div>
           </div>
 
+          <div className="rounded-xl border border-zinc-800 p-3">
+            <div className="text-xs text-zinc-400 mb-2">Codex Desk</div>
+            <div className="relative h-20 rounded-lg bg-zinc-900 overflow-hidden">
+              <div className="absolute inset-x-2 bottom-2 h-2 rounded bg-zinc-700"/>
+              <div className="absolute left-3 bottom-4 h-6 w-10 rounded bg-zinc-600 animate-pulse"/>
+              <div className="absolute left-16 bottom-4 h-8 w-8 rounded-full bg-emerald-500/60 animate-bounce"/>
+              <div className="absolute right-3 top-3 h-2 w-2 rounded-full bg-emerald-400 animate-ping"/>
+            </div>
+          </div>
+
           <div className="space-y-2">
             <label className="text-xs text-zinc-400">Model</label>
-            <select value={model} onChange={(e) => setModel(e.target.value)} className="w-full rounded-lg bg-zinc-800 p-2 text-sm">
-              <option>gpt-4o-mini</option>
-              <option>gpt-4o</option>
-              <option>gpt-5-mini</option>
-              <option>gpt-5</option>
+            <div className="w-full rounded-lg bg-zinc-800 p-2 text-sm">gpt-5.3-codex</div>
+            <label className="text-xs text-zinc-400">Reasoning</label>
+            <select value={reasoning} onChange={(e) => setReasoning(e.target.value as any)} className="w-full rounded-lg bg-zinc-800 p-2 text-sm">
+              <option value="off">off</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option>
             </select>
             <label className="text-xs text-zinc-400">Session OpenAI key override</label>
             <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder="Optional" className="w-full rounded-lg bg-zinc-800 p-2 text-sm" />

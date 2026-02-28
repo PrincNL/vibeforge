@@ -21,9 +21,12 @@ export async function POST(req: Request) {
   const messages = Array.isArray(body.messages) ? body.messages : [];
 
   const client = new OpenAI({ apiKey });
+  const effort = body.reasoning === "off" ? "minimal" : (body.reasoning || "low");
+
   const response = await client.responses.create({
-    model: body.model || "gpt-4o-mini",
+    model: "gpt-5.3-codex",
     input: messages,
+    reasoning: { effort },
   });
 
   return NextResponse.json({ text: response.output_text || "" });
