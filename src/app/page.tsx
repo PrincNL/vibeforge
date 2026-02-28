@@ -271,7 +271,24 @@ export default function Home() {
     return () => { if (typeof unsub === "function") unsub(); };
   }, []);
 
-  if (setupLoading) return <main className="min-h-screen grid place-items-center text-zinc-300">Loading workspace…</main>;
+  if (setupLoading) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 grid place-items-center p-6">
+        <div className="glass w-full max-w-md rounded-3xl p-6 space-y-4 animate-float-slow">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl font-semibold">Loading workspace</h1>
+            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+          </div>
+          <div className="rounded-2xl bg-black/30 border border-white/10 p-4 space-y-2">
+            <div className="h-2 rounded bg-white/10 animate-pulse" />
+            <div className="h-2 rounded bg-white/10 animate-pulse" />
+            <div className="h-2 w-2/3 rounded bg-white/10 animate-pulse" />
+          </div>
+          <p className="text-xs text-zinc-400">Preparing chats, memory, autonomous controls and model runtime...</p>
+        </div>
+      </main>
+    );
+  }
 
   const currentTheme = themeBg[setup?.theme || "midnight"];
   const requiresOAuth = setup?.authMode === "openai-oauth";
