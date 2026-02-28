@@ -28,23 +28,35 @@ function getUpdaterRuntime() {
   };
 }
 
-const cleanEnv: NodeJS.ProcessEnv = {
+const gitEnv: NodeJS.ProcessEnv = {
   ...process.env,
-  NODE_ENV: "production" as const,
   NEXT_TELEMETRY_DISABLED: "1",
+};
+
+const installEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  NEXT_TELEMETRY_DISABLED: "1",
+  NODE_ENV: "development", // ensure devDependencies are installed
+  npm_config_production: "false",
+};
+
+const buildEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  NEXT_TELEMETRY_DISABLED: "1",
+  NODE_ENV: "production" as const,
 };
 
 export async function getUpdateStatus(): Promise<UpdateStatus> {
   const runtime = getUpdaterRuntime();
 
   try {
-    const { stdout: currentRaw } = await execAsync("git rev-parse HEAD", { cwd: runtime.repoPath, env: cleanEnv });
+    const { stdout: currentRaw } = await execAsync("git rev-parse HEAD", { cwd: runtime.repoPath, env: gitEnv });
     const current = currentRaw.trim();
 
-    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath, env: gitEnv });
     const { stdout: remoteRaw } = await execAsync(`git rev-parse origin/${runtime.branch}`, {
       cwd: runtime.repoPath,
-      env: cleanEnv,
+      env: gitEnv,
     });
     const remote = remoteRaw.trim();
 
@@ -73,24 +85,22 @@ export async function applyUpdate() {
   const runtime = getUpdaterRuntime();
 
   try {
-    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath, env: cleanEnv });
-    await execAsync(`git reset --hard origin/${runtime.branch}`, { cwd: runtime.repoPath, env: cleanEnv });
-    await execAsync("npm install", { cwd: runtime.repoPath, env: cleanEnv });
-    await execAsync("npm run build", { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath, env: gitEnv });
+    await execAsync(`git reset --hard origin/${runtime.branch}`, { cwd: runtime.repoPath, env: gitEnv });
+    await execAsync("npm install --include=dev", { cwd: runtime.repoPath, env: installEnv });
+    await execAsync("npm run build", { cwd: runtime.repoPath, env: buildEnv });
   } catch (firstError) {
-    // Self-heal attempt: clear install state and retry cleanly
-    await execAsync("npm cache verify", { cwd: runtime.repoPath, env: cleanEnv }).catch(() => {});
-    await execAsync("npm install --force", { cwd: runtime.repoPath, env: cleanEnv });
-    await execAsync("npm run build", { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync("npm cache verify", { cwd: runtime.repoPath, env: installEnv }).catch(() => {});
+    await execAsync("npm install --include=dev --force", { cwd: runtime.repoPath, env: installEnv });
+    await execAsync("npm run build", { cwd: runtime.repoPath, env: buildEnv });
 
     if (firstError instanceof Error) {
-      // keep first error context in message trail when success after retry
       console.warn("[updater] First attempt failed, recovered on retry:", firstError.message);
     }
   }
 
   if (runtime.restartCmd) {
-    await execAsync(runtime.restartCmd, { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync(runtime.restartCmd, { cwd: runtime.repoPath, env: gitEnv });
   }
 
   return {
