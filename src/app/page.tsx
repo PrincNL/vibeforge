@@ -10,16 +10,47 @@ type SetupStatus = {
   authMode: "dev-bypass" | "openai-oauth";
   theme: "midnight" | "ocean" | "sunset" | "forest";
   oauthConnected: boolean;
+  modes?: {
+    remoteTailnetOnly?: boolean;
+    requireRemoteToken?: boolean;
+    allowCommandExecution?: boolean;
+  };
 };
+
 type UpdateStatus = { ok: boolean; current: string; remote: string; hasUpdate: boolean; message?: string };
 type AutonomyState = {
   status: "idle" | "running" | "stopped";
   currentCommand: string | null;
   activities: Array<{ ts: string; type: "info" | "command" | "error"; text: string }>;
 };
+type Blocker = { id: string; title: string; detail: string; oneClickFix?: boolean };
 type Diagnostics = {
   ok: boolean;
-  blockers: Array<{ id: string; title: string; detail: string; oneClickFix?: boolean }>;
+  blockers: Blocker[];
+  tailscale?: {
+    ok: boolean;
+    installed: boolean;
+    running: boolean;
+    backendState: string;
+    tailnetIp: string;
+    tailnetName: string;
+    selfDnsName: string;
+    relay: "direct" | "derp" | "mixed" | "unknown";
+    peersOnline: number;
+    detail: string;
+    suggestions: Array<{ id: string; title: string; detail: string; oneClickFix?: boolean }>;
+  };
+};
+
+type CheckState = "pass" | "warn" | "fail" | "pending";
+type PreflightCheck = {
+  id: string;
+  label: string;
+  state: CheckState;
+  detail: string;
+  fixLabel?: string;
+  fixId?: string;
+  action?: "refresh" | "self-test" | "start-device-auth";
 };
 
 const themeBg: Record<string, string> = {
@@ -49,6 +80,8 @@ export default function Home() {
   const [diagnostics, setDiagnostics] = useState<Diagnostics | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
   const [selfTestMessage, setSelfTestMessage] = useState("");
+  const [preflightBusy, setPreflightBusy] = useState(false);
+  const [preflightMessage, setPreflightMessage] = useState("");
 
   const latestCodeBlock = useMemo(() => {
     const last = [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
@@ -114,6 +147,7 @@ export default function Home() {
     const res = await fetch("/api/autonomy/run", { cache: "no-store" });
     const data = await res.json();
     if (res.ok) setAutonomyState(data.state || null);
+    else if (data?.message) setAutonomyMessage(data.message);
   }
 
   async function startAutonomy() {
@@ -154,7 +188,93 @@ export default function Home() {
     setSelfTestMessage("Running self-test...");
     const res = await fetch("/api/codex/self-test", { cache: "no-store" });
     const data = await res.json();
-    setSelfTestMessage(res.ok ? `Codex OK: ${data.working || "unknown"}` : (data?.candidates?.[0]?.error || "Codex self-test failed"));
+    setSelfTestMessage(res.ok ? `Codex OK: ${data.working || "unknown"}` : data?.candidates?.[0]?.error || "Codex self-test failed");
+    return { ok: res.ok, data };
+  }
+
+  async function startDeviceAuth() {
+    const res = await fetch("/api/oauth/openai/device/start", { method: "POST" });
+    const data = await res.json();
+    setPreflightMessage(res.ok ? `Device auth started: ${data.code || "continue in browser"}` : data.message || "Failed to start device auth");
+  }
+
+  async function runPreflight() {
+    setPreflightBusy(true);
+    setPreflightMessage("Running live checks...");
+    try {
+      await Promise.all([refreshDiagnostics(), refreshAutonomyState(), checkUpdates(), refreshSetup()]);
+      const [healthRes, chatRes] = await Promise.all([
+        fetch("/api/health", { cache: "no-store" }),
+        fetch("/api/chat", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ model: "gpt-5.3-codex", reasoning: "off", messages: [{ role: "user", content: "E2E preflight ping. Reply with one word: pong." }] }),
+        }),
+      ]);
+      const self = await runSelfTest();
+      const okCount = [healthRes.ok, chatRes.ok, self.ok].filter(Boolean).length;
+      setPreflightMessage(`Preflight done: ${okCount}/3 runtime checks passed`);
+    } catch (error) {
+      setPreflightMessage(error instanceof Error ? error.message : "Preflight failed");
+    } finally {
+      setPreflightBusy(false);
+    }
+  }
+
+  const preflightChecks: PreflightCheck[] = useMemo(() => {
+    const blockers = diagnostics?.blockers || [];
+    const byId = (id: string) => blockers.find((b) => b.id === id);
+    const authReady = Boolean(setup?.oauthConnected || apiKey.trim());
+    const tailscaleOk = diagnostics?.tailscale?.ok;
+
+    return [
+      {
+        id: "chat-runtime",
+        label: "Chat + fallback auth",
+        state: byId("auth_missing") ? "fail" : authReady ? "pass" : "warn",
+        detail: byId("auth_missing") ? "No API key and no connected account" : authReady ? "Auth path present" : "Use API key override or connect OAuth",
+      },
+      {
+        id: "tailscale-connectivity",
+        label: "Tailscale connectivity",
+        state: tailscaleOk ? "pass" : "warn",
+        detail: diagnostics?.tailscale?.detail || "No data",
+        fixLabel: "Guidance",
+        fixId: "tailscale_connectivity",
+      },
+      {
+        id: "safe-defaults",
+        label: "Tailnet-safe autonomy defaults",
+        state: byId("tailscale_safe_defaults") ? "warn" : "pass",
+        detail: byId("tailscale_safe_defaults")?.detail || "Safe defaults active",
+        fixLabel: "Apply safe defaults",
+        fixId: "tailscale_safe_defaults",
+      },
+      {
+        id: "update-check",
+        label: "Updater endpoint",
+        state: updateStatus?.ok ? "pass" : "fail",
+        detail: updateStatus?.ok ? `${updateStatus.current} → ${updateStatus.remote}` : updateStatus?.message || "Update status unavailable",
+        fixLabel: "Retry",
+        fixId: "update_check",
+      },
+      {
+        id: "codex-runtime",
+        label: "Codex runtime",
+        state: byId("codex_runtime") ? "fail" : selfTestMessage.includes("Codex OK") ? "pass" : "pending",
+        detail: byId("codex_runtime")?.detail || selfTestMessage || "Run self-test",
+      },
+    ];
+  }, [diagnostics, setup, updateStatus, apiKey, selfTestMessage]);
+
+  async function handlePreflightAction(check: PreflightCheck) {
+    if (check.fixId) {
+      await runFix(check.fixId);
+      return;
+    }
+    if (check.action === "self-test") await runSelfTest();
+    if (check.action === "start-device-auth") await startDeviceAuth();
+    if (check.action === "refresh") await runPreflight();
   }
 
   async function sendPrompt() {
@@ -193,8 +313,13 @@ export default function Home() {
     checkUpdates();
     refreshAutonomyState();
     refreshDiagnostics();
-    const timer = setInterval(() => refreshAutonomyState(), 2000);
-    return () => clearInterval(timer);
+    runPreflight();
+    const timer = setInterval(() => refreshAutonomyState(), 2500);
+    const preflightTimer = setInterval(() => runPreflight(), 45000);
+    return () => {
+      clearInterval(timer);
+      clearInterval(preflightTimer);
+    };
   }, []);
 
   const theme = themeBg[setup?.theme || "midnight"];
@@ -202,45 +327,99 @@ export default function Home() {
   return (
     <main className={`min-h-screen ${theme} p-4 md:p-6`}>
       <div className="mx-auto max-w-7xl grid grid-cols-1 md:grid-cols-12 gap-4">
-        <aside className="md:col-span-3 glass rounded-3xl p-4 space-y-4">
-          <div className="flex items-center justify-between"><h2 className="font-semibold text-lg">VibeForge</h2><button onClick={createNewChat} className="rounded-lg px-2 py-1 border border-white/20 text-xs">New chat</button></div>
-          <div className="glass rounded-2xl p-3 space-y-2 max-h-48 overflow-auto">{threads.map((t) => <button key={t.id} onClick={() => loadThread(t.id)} className={`w-full text-left rounded px-2 py-1 text-xs ${activeThreadId === t.id ? "bg-white/15" : "bg-black/20"}`}>{t.title} ({t.count})</button>)}</div>
-          <div className="space-y-2">
-            <div className="text-xs text-zinc-400">Model: gpt-5.3-codex</div>
-            <div className="grid grid-cols-4 gap-1">{(["off", "low", "medium", "high"] as Reasoning[]).map((r) => <button key={r} onClick={() => setReasoning(r)} className={`rounded px-2 py-1 text-xs border ${reasoning === r ? "bg-emerald-400 text-black" : "border-white/20"}`}>{r}</button>)}</div>
-            <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder="API key override" className="w-full rounded bg-black/30 border border-white/10 p-2 text-xs" />
+        <aside className="md:col-span-3 panel rounded-3xl p-4 space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight">VibeForge</h2>
+              <p className="text-[11px] text-zinc-400">Codex cockpit</p>
+            </div>
+            <button onClick={createNewChat} className="btn btn-ghost">New chat</button>
           </div>
-          <div className="glass rounded-2xl p-3 text-xs space-y-2">
-            <div>{updateStatus?.current || "..."} → {updateStatus?.remote || "..."}</div>
-            <div className="flex gap-2"><button onClick={checkUpdates} disabled={updateBusy} className="rounded border border-white/20 px-2 py-1">{updateBusy ? "..." : "Check"}</button><button onClick={applyUpdate} disabled={updateBusy} className="rounded bg-emerald-400 text-black px-2 py-1">{updateBusy ? "Updating" : "Update now"}</button></div>
-            <button onClick={runSelfTest} className="rounded border border-white/20 px-2 py-1">Codex self-test</button>
-            {updateMessage && <div>{updateMessage}</div>}
-            {selfTestMessage && <div className="text-zinc-400">{selfTestMessage}</div>}
+
+          <div className="panel-subtle rounded-2xl p-2 max-h-48 overflow-auto space-y-1">
+            {threads.map((t) => (
+              <button key={t.id} onClick={() => loadThread(t.id)} className={`thread-item ${activeThreadId === t.id ? "thread-item-active" : ""}`}>
+                <span className="truncate">{t.title}</span>
+                <span className="text-[10px] text-zinc-400">{t.count}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="space-y-2">
+            <div className="section-label">Model · gpt-5.3-codex</div>
+            <div className="grid grid-cols-4 gap-1">
+              {(["off", "low", "medium", "high"] as Reasoning[]).map((r) => (
+                <button key={r} onClick={() => setReasoning(r)} className={`chip ${reasoning === r ? "chip-active" : ""}`}>
+                  {r}
+                </button>
+              ))}
+            </div>
+            <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} type="password" placeholder="API key override" className="vf-input" />
+          </div>
+
+          <div className="panel-subtle rounded-2xl p-3 text-xs space-y-2">
+            <div className="flex items-center justify-between text-zinc-300"><span>Updater</span><span>{updateStatus?.hasUpdate ? "Update ready" : "In sync"}</span></div>
+            <div className="text-zinc-400">{updateStatus?.current || "..."} → {updateStatus?.remote || "..."}</div>
+            <div className="flex gap-2">
+              <button onClick={checkUpdates} disabled={updateBusy} className="btn btn-ghost">{updateBusy ? "Checking" : "Check"}</button>
+              <button onClick={applyUpdate} disabled={updateBusy} className="btn btn-primary">{updateBusy ? "Updating" : "Update now"}</button>
+            </div>
+            {updateMessage && <div className="text-zinc-400">{updateMessage}</div>}
           </div>
         </aside>
 
-        <section className="md:col-span-5 glass rounded-3xl p-4 h-[84vh] flex flex-col">
-          <h2 className="font-semibold text-lg">Codex Chat</h2>
-          <div className="mt-3 flex-1 overflow-auto space-y-2">{messages.map((m, i) => <div key={i} className={`rounded-xl p-2 text-xs ${m.role === "user" ? "bg-white/10" : "bg-black/35 border border-white/10"}`}><pre className="whitespace-pre-wrap font-mono">{m.content}</pre></div>)}</div>
-          <div className="mt-3 flex gap-2"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className="flex-1 h-24 rounded-2xl bg-black/30 border border-white/10 p-3 text-sm" /><button onClick={sendPrompt} disabled={loading} className="rounded-2xl bg-emerald-400 text-black font-semibold px-4 py-3">{loading ? "Working..." : "Run"}</button></div>
+        <section className="md:col-span-5 panel rounded-3xl p-4 h-[84vh] flex flex-col">
+          <h2 className="text-lg font-semibold tracking-tight">Codex Chat</h2>
+          <div className="mt-3 flex-1 overflow-auto space-y-2 pr-1">
+            {messages.map((m, i) => <div key={i} className={`bubble ${m.role === "user" ? "bubble-user" : "bubble-assistant"}`}><pre className="whitespace-pre-wrap font-mono">{m.content}</pre></div>)}
+          </div>
+          <div className="mt-3 flex gap-2">
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className="vf-input h-24" />
+            <button onClick={sendPrompt} disabled={loading} className="btn btn-primary">{loading ? "Working..." : "Run"}</button>
+          </div>
         </section>
 
-        <section className="md:col-span-4 glass rounded-3xl p-4 h-[84vh] overflow-auto space-y-3">
+        <section className="md:col-span-4 panel rounded-3xl p-4 h-[84vh] overflow-auto space-y-3">
           <h3 className="font-semibold">Live Code Pane</h3>
-          <pre className="rounded-2xl bg-black/50 border border-white/10 p-3 text-xs overflow-auto min-h-48">{latestCodeBlock}</pre>
-          <div className="rounded-2xl bg-black/30 border border-white/10 p-3 text-xs space-y-2">
-            <div className="flex items-center justify-between"><span>Autonomy</span><div className="flex gap-2"><button onClick={startAutonomy} className="rounded bg-emerald-400 text-black px-2 py-1">Start</button><button onClick={stopAutonomy} className="rounded bg-red-500 text-black px-2 py-1">Stop</button></div></div>
-            <input value={autonomyGoal} onChange={(e) => setAutonomyGoal(e.target.value)} className="w-full rounded bg-black/30 border border-white/10 p-2" />
-            <input value={autonomyProjectDir} onChange={(e) => setAutonomyProjectDir(e.target.value)} placeholder="Project dir (optional)" className="w-full rounded bg-black/30 border border-white/10 p-2" />
-            <label className="flex items-center gap-2"><input type="checkbox" checked={allowOutsideStorage} onChange={(e) => setAllowOutsideStorage(e.target.checked)} /> Allow outside install dir</label>
+          <pre className="rounded-2xl bg-black/50 border border-white/10 p-3 text-xs overflow-auto min-h-40">{latestCodeBlock}</pre>
+
+          <div className="panel-subtle rounded-2xl p-3 text-xs space-y-2">
+            <div className="flex items-center justify-between"><span className="font-medium">Autonomy</span><div className="flex gap-2"><button onClick={startAutonomy} className="btn btn-primary">Start</button><button onClick={stopAutonomy} className="btn btn-danger">Stop</button></div></div>
+            <input value={autonomyGoal} onChange={(e) => setAutonomyGoal(e.target.value)} className="vf-input" />
+            <input value={autonomyProjectDir} onChange={(e) => setAutonomyProjectDir(e.target.value)} placeholder="Project dir (optional)" className="vf-input" />
+            <label className="flex items-center gap-2 text-zinc-300"><input type="checkbox" checked={allowOutsideStorage} onChange={(e) => setAllowOutsideStorage(e.target.checked)} /> Allow outside install dir</label>
             <div>Status: <span className="text-emerald-300">{autonomyState?.status || "idle"}</span></div>
             <div>Current: {autonomyState?.currentCommand || "-"}</div>
             {autonomyMessage && <div className="text-zinc-300">{autonomyMessage}</div>}
             <div className="max-h-28 overflow-auto space-y-1">{(autonomyState?.activities || []).slice(0, 8).map((a, i) => <div key={i}><span className="text-zinc-500">{new Date(a.ts).toLocaleTimeString()} </span><span className={a.type === "error" ? "text-red-300" : a.type === "command" ? "text-cyan-300" : "text-zinc-300"}>{a.text}</span></div>)}</div>
           </div>
-          <div className="rounded-2xl bg-black/30 border border-white/10 p-3 text-xs space-y-2">
-            <div className="flex items-center justify-between"><span>Diagnostics</span><button onClick={refreshDiagnostics} disabled={diagBusy} className="rounded border border-white/20 px-2 py-1">{diagBusy ? "..." : "Refresh"}</button></div>
-            {(diagnostics?.blockers || []).length === 0 ? <div className="text-emerald-300">No blockers detected</div> : diagnostics?.blockers.map((b) => <div key={b.id} className="rounded bg-black/40 p-2"><div className="text-red-300">{b.title}</div><div className="text-zinc-400">{b.detail}</div>{b.oneClickFix && <button onClick={() => runFix(b.id)} className="mt-1 rounded border border-emerald-400/40 px-2 py-1 text-emerald-300">One-click fix</button>}</div>)}
+
+          <div className="panel-subtle rounded-2xl p-3 text-xs space-y-2">
+            <div className="flex items-center justify-between"><span className="font-medium">Tailscale Connectivity</span><button onClick={refreshDiagnostics} disabled={diagBusy} className="btn btn-ghost">Refresh</button></div>
+            <div className="grid grid-cols-2 gap-2 text-zinc-300">
+              <div>State: <span className="text-emerald-300">{diagnostics?.tailscale?.backendState || "unknown"}</span></div>
+              <div>Path: <span className="text-cyan-300">{diagnostics?.tailscale?.relay || "unknown"}</span></div>
+              <div>Tailnet IP: <span className="text-zinc-100">{diagnostics?.tailscale?.tailnetIp || "-"}</span></div>
+              <div>Peers online: <span className="text-zinc-100">{diagnostics?.tailscale?.peersOnline ?? 0}</span></div>
+            </div>
+            <div className="text-zinc-400">{diagnostics?.tailscale?.detail || "No tailscale data yet"}</div>
+            <div className="flex gap-2">
+              <button onClick={() => runFix("tailscale_connectivity")} className="btn btn-ghost">One-click guidance</button>
+              <button onClick={() => runFix("tailscale_safe_defaults")} className="btn btn-ghost">Apply safe defaults</button>
+            </div>
+            {(diagnostics?.tailscale?.suggestions || []).map((s) => <div key={s.id} className="rounded bg-black/40 p-2 border border-white/10"><div className="text-zinc-100">{s.title}</div><div className="text-zinc-400">{s.detail}</div></div>)}
+          </div>
+
+          <div className="panel-subtle rounded-2xl p-3 text-xs space-y-2">
+            <div className="flex items-center justify-between"><span className="font-medium">E2E Preflight</span><div className="flex gap-2"><button onClick={runPreflight} disabled={preflightBusy} className="btn btn-ghost">{preflightBusy ? "Running" : "Run checks"}</button><button onClick={runSelfTest} className="btn btn-ghost">Codex self-test</button></div></div>
+            {preflightMessage && <div className="text-zinc-300">{preflightMessage}</div>}
+            <div className="space-y-2">{preflightChecks.map((item) => <div key={item.id} className="rounded-xl border border-white/10 bg-black/30 p-2"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2"><span className={`status-dot status-${item.state}`} /><span className="font-medium">{item.label}</span></div>{(item.fixId || item.action) && <button onClick={() => handlePreflightAction(item)} className="btn btn-ghost !px-2 !py-1 text-[10px]">{item.fixLabel || "Fix"}</button>}</div><div className="mt-1 text-zinc-400">{item.detail}</div></div>)}</div>
+          </div>
+
+          <div className="panel-subtle rounded-2xl p-3 text-xs space-y-2">
+            <div className="flex items-center justify-between"><span className="font-medium">Diagnostics</span><button onClick={refreshDiagnostics} disabled={diagBusy} className="btn btn-ghost">{diagBusy ? "..." : "Refresh"}</button></div>
+            {(diagnostics?.blockers || []).length === 0 ? <div className="text-emerald-300">No blockers detected</div> : diagnostics?.blockers.map((b) => <div key={b.id} className="rounded bg-black/40 p-2 border border-red-400/20"><div className="text-red-300">{b.title}</div><div className="text-zinc-400">{b.detail}</div>{b.oneClickFix && <button onClick={() => runFix(b.id)} className="mt-2 btn btn-ghost !px-2 !py-1 text-[10px]">One-click fix</button>}</div>)}
+            {selfTestMessage && <div className="text-zinc-400">{selfTestMessage}</div>}
           </div>
         </section>
       </div>
