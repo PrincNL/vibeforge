@@ -1,28 +1,77 @@
 # VibeForge
 
-Open-source “vibe coding” app in Next.js met:
-- OpenAI OAuth login (Auth.js custom OAuth provider)
-- Bring-your-own OpenAI API key per user
-- Chat + live code pane UI
-- Dockerfile + docker-compose
+A local-first, open-source **Codex-style coding cockpit** built with Next.js.
 
-## Quick start
+## What you get
+
+- Codex-like 3-panel layout (threads, chat, tools/code pane)
+- OpenAI-powered coding chat via Responses API
+- OpenAI OAuth login support (Auth.js custom OAuth provider)
+- Local dev bypass mode (run without OAuth while building locally)
+- Dockerfile + docker-compose for one-command startup
+- Health endpoint: `GET /api/health`
+
+---
+
+## 1) Run locally with Docker (fastest)
 
 ```bash
 cp .env.example .env
-# vul OAuth vars in
+docker compose up -d --build
+```
+
+Open: http://localhost:3000
+
+---
+
+## 2) Run with Node.js
+
+```bash
+cp .env.example .env
 npm install
 npm run dev
 ```
 
-Open op http://localhost:3000
+---
 
-## Docker
+## Auth modes
 
-```bash
-docker compose up -d --build
+### A) Local mode (works immediately)
+Use this in `.env`:
+
+```env
+DEV_BYPASS_LOGIN=true
+NEXT_PUBLIC_DEV_BYPASS_LOGIN=true
 ```
 
-## Belangrijk
+You can still provide OpenAI API key in the UI, or set `OPENAI_API_KEY` in `.env`.
 
-Deze app gebruikt **jouw eigen OpenAI OAuth app credentials** en **jouw eigen API key**.
+### B) OpenAI OAuth mode
+Use this in `.env`:
+
+```env
+DEV_BYPASS_LOGIN=false
+NEXT_PUBLIC_DEV_BYPASS_LOGIN=false
+OPENAI_OAUTH_ISSUER=...
+OPENAI_OAUTH_CLIENT_ID=...
+OPENAI_OAUTH_CLIENT_SECRET=...
+OPENAI_OAUTH_AUTH_URL=...
+OPENAI_OAUTH_TOKEN_URL=...
+OPENAI_OAUTH_USERINFO_URL=...
+```
+
+> Note: OAuth only works when your OpenAI OAuth app credentials are valid and correctly configured.
+
+---
+
+## Verify everything
+
+- App UI: `http://localhost:3000`
+- Health: `http://localhost:3000/api/health`
+- Build check: `npm run build`
+
+---
+
+## Project goal
+
+Recreate the Codex app experience in a self-hosted Node.js/Next.js app that users can run locally with minimal setup.
