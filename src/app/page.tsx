@@ -82,6 +82,7 @@ export default function Home() {
   const [selfTestMessage, setSelfTestMessage] = useState("");
   const [preflightBusy, setPreflightBusy] = useState(false);
   const [preflightMessage, setPreflightMessage] = useState("");
+  const [preflightChecksLive, setPreflightChecksLive] = useState<PreflightCheck[]>([]);
 
   const latestCodeBlock = useMemo(() => {
     const last = [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
@@ -203,17 +204,19 @@ export default function Home() {
     setPreflightMessage("Running live checks...");
     try {
       await Promise.all([refreshDiagnostics(), refreshAutonomyState(), checkUpdates(), refreshSetup()]);
-      const [healthRes, chatRes] = await Promise.all([
-        fetch("/api/health", { cache: "no-store" }),
-        fetch("/api/chat", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ model: "gpt-5.3-codex", reasoning: "off", messages: [{ role: "user", content: "E2E preflight ping. Reply with one word: pong." }] }),
-        }),
-      ]);
-      const self = await runSelfTest();
-      const okCount = [healthRes.ok, chatRes.ok, self.ok].filter(Boolean).length;
-      setPreflightMessage(`Preflight done: ${okCount}/3 runtime checks passed`);
+      const res = await fetch("/api/preflight", { cache: "no-store" });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setPreflightMessage(data?.message || "Preflight failed");
+        return;
+      }
+
+      const checks = Array.isArray(data?.checks) ? data.checks : [];
+      setPreflightChecksLive(checks);
+
+      const score = data?.score || { pass: 0, warn: 0, fail: 0, total: checks.length || 0 };
+      setPreflightMessage(`Preflight: ${score.pass}/${score.total} pass · ${score.warn} warn · ${score.fail} fail`);
     } catch (error) {
       setPreflightMessage(error instanceof Error ? error.message : "Preflight failed");
     } finally {
@@ -221,11 +224,22 @@ export default function Home() {
     }
   }
 
+
   const preflightChecks: PreflightCheck[] = useMemo(() => {
+    if (preflightChecksLive.length > 0) {
+      return preflightChecksLive.map((item) => ({
+        id: item.id,
+        label: item.label,
+        state: item.state,
+        detail: item.detail,
+        fixId: item.fixId,
+        fixLabel: item.fixId ? "Remediate" : undefined,
+      }));
+    }
+
     const blockers = diagnostics?.blockers || [];
     const byId = (id: string) => blockers.find((b) => b.id === id);
     const authReady = Boolean(setup?.oauthConnected || apiKey.trim());
-    const tailscaleOk = diagnostics?.tailscale?.ok;
 
     return [
       {
@@ -235,22 +249,6 @@ export default function Home() {
         detail: byId("auth_missing") ? "No API key and no connected account" : authReady ? "Auth path present" : "Use API key override or connect OAuth",
       },
       {
-        id: "tailscale-connectivity",
-        label: "Tailscale connectivity",
-        state: tailscaleOk ? "pass" : "warn",
-        detail: diagnostics?.tailscale?.detail || "No data",
-        fixLabel: "Guidance",
-        fixId: "tailscale_connectivity",
-      },
-      {
-        id: "safe-defaults",
-        label: "Tailnet-safe autonomy defaults",
-        state: byId("tailscale_safe_defaults") ? "warn" : "pass",
-        detail: byId("tailscale_safe_defaults")?.detail || "Safe defaults active",
-        fixLabel: "Apply safe defaults",
-        fixId: "tailscale_safe_defaults",
-      },
-      {
         id: "update-check",
         label: "Updater endpoint",
         state: updateStatus?.ok ? "pass" : "fail",
@@ -258,14 +256,8 @@ export default function Home() {
         fixLabel: "Retry",
         fixId: "update_check",
       },
-      {
-        id: "codex-runtime",
-        label: "Codex runtime",
-        state: byId("codex_runtime") ? "fail" : selfTestMessage.includes("Codex OK") ? "pass" : "pending",
-        detail: byId("codex_runtime")?.detail || selfTestMessage || "Run self-test",
-      },
     ];
-  }, [diagnostics, setup, updateStatus, apiKey, selfTestMessage]);
+  }, [preflightChecksLive, diagnostics, setup, updateStatus, apiKey]);
 
   async function handlePreflightAction(check: PreflightCheck) {
     if (check.fixId) {

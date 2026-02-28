@@ -1,9 +1,6 @@
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
+import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
-
-const execAsync = promisify(exec);
 
 type Activity = { ts: string; type: "info" | "command" | "error"; text: string };
 
@@ -29,6 +26,8 @@ const state: AutonomyState = {
   activities: [],
 };
 
+let activeChild: ChildProcess | null = null;
+
 function push(type: Activity["type"], text: string) {
   state.activities.unshift({ ts: new Date().toISOString(), type, text });
   state.activities = state.activities.slice(0, 200);
@@ -48,6 +47,12 @@ export function requestStop() {
   state.stopRequested = true;
   state.running = false;
   state.status = "stopped";
+  if (activeChild && !activeChild.killed) {
+    activeChild.kill("SIGTERM");
+    setTimeout(() => {
+      if (activeChild && !activeChild.killed) activeChild.kill("SIGKILL");
+    }, 1500);
+  }
   state.currentCommand = null;
   push("info", "Emergency stop requested");
 }
@@ -61,6 +66,50 @@ function commandLooksUnsafe(cmd: string) {
   const lower = cmd.toLowerCase();
   const dangerous = ["format ", "diskpart", "shutdown", "reg delete", "del /f /s /q c:\\", "rm -rf /"];
   return dangerous.some((d) => lower.includes(d));
+}
+
+async function execCommand(command: string, cwd: string) {
+  return await new Promise<{ ok: boolean; output: string }>((resolve) => {
+    const child = spawn(command, {
+      cwd,
+      shell: true,
+      env: process.env,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    activeChild = child;
+
+    let stdout = "";
+    let stderr = "";
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      setTimeout(() => {
+        if (!child.killed) child.kill("SIGKILL");
+      }, 1000);
+    }, 120000);
+
+    child.stdout?.on("data", (d) => {
+      stdout += d.toString();
+    });
+
+    child.stderr?.on("data", (d) => {
+      stderr += d.toString();
+    });
+
+    child.on("close", (code) => {
+      clearTimeout(timeout);
+      activeChild = null;
+      const output = `${stdout}\n${stderr}`.trim().slice(0, 6000);
+      resolve({ ok: code === 0, output });
+    });
+
+    child.on("error", (error) => {
+      clearTimeout(timeout);
+      activeChild = null;
+      resolve({ ok: false, output: error.message || "spawn failed" });
+    });
+  });
 }
 
 export async function runCommands(commands: string[], cwd?: string) {
@@ -85,7 +134,10 @@ export async function runCommands(commands: string[], cwd?: string) {
 
   try {
     for (const command of commands) {
-      if (state.stopRequested) break;
+      if (state.stopRequested) {
+        push("info", "Stop requested; halting remaining commands.");
+        break;
+      }
 
       if (commandLooksUnsafe(command)) {
         push("error", `Blocked unsafe command: ${command}`);
@@ -95,31 +147,31 @@ export async function runCommands(commands: string[], cwd?: string) {
 
       state.currentCommand = command;
       push("command", command);
-      try {
-        const { stdout, stderr } = await execAsync(command, { cwd: targetDir, timeout: 120000 });
-        const out = `${stdout}\n${stderr}`.slice(0, 5000);
-        results.push({ command, output: out, ok: true });
-        push("info", `Command ok: `);
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        push("error", `Command failed:  :: `);
-        push("info", `Retrying once: `);
-        try {
-          const retry = await execAsync(command, { cwd: targetDir, timeout: 120000 });
-          const out = `\n`.slice(0, 5000);
-          push("info", `Recovered on retry: `);
-          results.push({ command, output: out, ok: true });
-        } catch (retryError) {
-          const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
-          results.push({ command, output: `\nRetry failed: `, ok: false });
+
+      const first = await execCommand(command, targetDir);
+      if (first.ok) {
+        results.push({ command, output: first.output, ok: true });
+        push("info", `Command succeeded: ${command}`);
+      } else {
+        push("error", `Command failed: ${command}`);
+        push("info", `Retrying once: ${command}`);
+
+        const retry = await execCommand(command, targetDir);
+        if (retry.ok) {
+          results.push({ command, output: retry.output, ok: true });
+          push("info", `Recovered on retry: ${command}`);
+        } else {
+          results.push({ command, output: `${first.output}\n\nRetry failed:\n${retry.output}`.trim().slice(0, 6000), ok: false });
+          push("error", `Retry failed: ${command}`);
         }
-      } finally {
-        state.currentCommand = null;
       }
+
+      state.currentCommand = null;
     }
   } finally {
     state.running = false;
     state.currentCommand = null;
+    activeChild = null;
     if (!state.stopRequested) {
       state.status = "idle";
       push("info", "Autonomous run finished");
