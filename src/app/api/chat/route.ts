@@ -5,19 +5,37 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import fsSync from "node:fs";
+import os from "node:os";
 
 type CmdCandidate = { cmd: string; argsPrefix: string[]; useShell: boolean };
 
+function pushIfExists(candidates: CmdCandidate[], cmd: string, argsPrefix: string[] = [], useShell = false) {
+  if (fsSync.existsSync(cmd)) {
+    candidates.push({ cmd, argsPrefix, useShell });
+  }
+}
+
 function buildCodexCandidates(): CmdCandidate[] {
   const candidates: CmdCandidate[] = [];
+  const isWin = process.platform === "win32";
 
   const custom = process.env.CODEX_CLI_PATH;
   if (custom) {
-    candidates.push({ cmd: custom, argsPrefix: [], useShell: process.platform === "win32" });
+    if (isWin) {
+      if (path.extname(custom)) {
+        candidates.push({ cmd: custom, argsPrefix: [], useShell: true });
+      } else {
+        pushIfExists(candidates, `${custom}.cmd`, [], true);
+        pushIfExists(candidates, `${custom}.exe`, [], false);
+        pushIfExists(candidates, custom, [], true);
+      }
+    } else {
+      candidates.push({ cmd: custom, argsPrefix: [], useShell: false });
+    }
   }
 
-  const finder = process.platform === "win32" ? "where" : "which";
-  const found = spawnSync(finder, ["codex"], { encoding: "utf8", shell: process.platform === "win32" });
+  const finder = isWin ? "where" : "which";
+  const found = spawnSync(finder, ["codex"], { encoding: "utf8", shell: isWin });
   if (found.status === 0 && found.stdout) {
     const lines = found.stdout
       .split(/\r?\n/)
@@ -25,30 +43,31 @@ function buildCodexCandidates(): CmdCandidate[] {
       .filter(Boolean);
 
     for (const line of lines) {
-      // direct path from where/which
-      candidates.push({ cmd: line, argsPrefix: [], useShell: process.platform === "win32" });
-
-      // windows shim variants
-      if (process.platform === "win32" && !line.toLowerCase().endsWith(".cmd")) {
-        const cmdVariant = `${line}.cmd`;
-        if (fsSync.existsSync(cmdVariant)) {
-          candidates.push({ cmd: cmdVariant, argsPrefix: [], useShell: true });
+      if (isWin) {
+        const ext = path.extname(line).toLowerCase();
+        if (ext) {
+          candidates.push({ cmd: line, argsPrefix: [], useShell: ext === ".cmd" || ext === ".bat" });
+        } else {
+          pushIfExists(candidates, `${line}.cmd`, [], true);
+          pushIfExists(candidates, `${line}.bat`, [], true);
+          pushIfExists(candidates, `${line}.exe`, [], false);
         }
+      } else {
+        candidates.push({ cmd: line, argsPrefix: [], useShell: false });
       }
     }
   }
 
   // plain command name
-  candidates.push({ cmd: "codex", argsPrefix: [], useShell: process.platform === "win32" });
+  candidates.push({ cmd: "codex", argsPrefix: [], useShell: isWin });
 
   // npx fallback
   candidates.push({
-    cmd: process.platform === "win32" ? "npx.cmd" : "npx",
+    cmd: isWin ? "npx.cmd" : "npx",
     argsPrefix: ["-y", "@openai/codex"],
-    useShell: process.platform === "win32",
+    useShell: isWin,
   });
 
-  // dedupe
   const seen = new Set<string>();
   return candidates.filter((c) => {
     const key = `${c.cmd}|${c.argsPrefix.join(" ")}|${c.useShell}`;
@@ -101,7 +120,7 @@ async function tryCodex(candidate: CmdCandidate, prompt: string, reasoning: stri
 }
 
 async function runViaCodex(prompt: string, reasoning: string) {
-  const outFile = path.join("/tmp", `vibeforge-codex-${Date.now()}.txt`);
+  const outFile = path.join(os.tmpdir(), `vibeforge-codex-${Date.now()}.txt`);
   const candidates = buildCodexCandidates();
 
   let lastError: unknown = null;
