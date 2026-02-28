@@ -25,6 +25,8 @@ export type AppConfig = {
     autonomousEnabled?: boolean;
     autonomousRiskLevel?: "safe" | "high-risk";
     allowCommandExecution?: boolean;
+    remoteTailnetOnly?: boolean;
+    requireRemoteToken?: boolean;
   };
 };
 
@@ -39,7 +41,7 @@ const defaultConfig: AppConfig = {
   oauth: { issuer: "https://auth.openai.com", connected: false },
   updater: { branch: "main" },
   github: { branch: "main", defaultPath: "generated/patch.ts" },
-  modes: { proactive: false, autonomousEnabled: false, autonomousRiskLevel: "safe", allowCommandExecution: false },
+  modes: { proactive: false, autonomousEnabled: false, autonomousRiskLevel: "safe", allowCommandExecution: false, remoteTailnetOnly: true, requireRemoteToken: true },
 };
 
 export function loadConfig(): AppConfig {
@@ -92,6 +94,8 @@ export function getSafeConfig() {
       autonomousEnabled: Boolean(cfg.modes?.autonomousEnabled),
       autonomousRiskLevel: cfg.modes?.autonomousRiskLevel || "safe",
       allowCommandExecution: Boolean(cfg.modes?.allowCommandExecution),
+      remoteTailnetOnly: cfg.modes?.remoteTailnetOnly !== false,
+      requireRemoteToken: cfg.modes?.requireRemoteToken !== false,
     },
   };
 }

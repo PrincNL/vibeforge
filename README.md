@@ -1,6 +1,6 @@
 # VibeForge
 
-A local-first, open-source **Codex-style desktop app**.
+A local-first, open-source **Codex-style desktop app** with practical remote operations over **Tailscale**.
 
 ## Development (desktop app)
 
@@ -9,8 +9,7 @@ npm install
 npm run dev
 ```
 
-`npm run dev` now launches a **real desktop window** (Electron), not a browser tab.
-The desktop app hosts the internal local runtime on `http://localhost:3210`.
+`npm run dev` launches Electron + local Next runtime (`http://localhost:3210`).
 
 ## Production runtime
 
@@ -19,10 +18,54 @@ npm run build
 npm run start:desktop
 ```
 
-## OAuth status
+## Universal deployment (cross-machine)
 
-- One-click OpenAI connect flow is implemented.
-- If OpenAI dynamic registration is blocked in your network (Cloudflare challenge), use the device-auth fallback path (next patch).
+### 1) Install + run on any host
+
+```bash
+git clone https://github.com/PrincNL/vibeforge.git
+cd vibeforge
+npm install
+npm run build
+npm run start:web
+```
+
+### 2) Add to Tailscale
+
+```bash
+sudo tailscale up --ssh
+```
+
+Then use the host's tailnet IP or DNS name (shown in **Tailscale Connectivity** panel).
+
+### 3) Secure remote control defaults
+
+Use `.env` (or process manager env):
+
+```bash
+VIBEFORGE_REMOTE_TOKEN=replace-with-long-random-token
+```
+
+By default VibeForge now uses safe remote posture:
+
+- `remoteTailnetOnly: true` (remote autonomy requests must be from tailnet IP ranges)
+- `requireRemoteToken: true` (`x-vf-remote-token` required for remote autonomy start/stop)
+- `allowCommandExecution: false` (planner can propose commands; no execution until explicitly enabled)
+
+## Tailscale panel + preflight
+
+The UI now includes:
+
+- **Tailscale Connectivity** panel
+  - Backend state
+  - Tailnet IP
+  - Relay path (direct/DERP when detectable)
+  - Online peers
+  - Actionable suggestions
+- **E2E Preflight** panel
+  - Live runtime checks
+  - One-click guidance/fixes (diagnostics endpoints)
+  - Safe defaults hardening button
 
 ## Endpoints
 
@@ -31,8 +74,9 @@ npm run start:desktop
 - `POST /api/setup/save`
 - `GET /api/update/status`
 - `POST /api/update/apply`
-- `POST /api/github/connect`
-- `POST /api/github/push`
+- `GET /api/tailscale/status`
+- `GET /api/diagnostics`
+- `POST /api/diagnostics/fix`
 - `POST /api/autonomy/run`
 - `GET /api/oauth/openai/start`
 - `GET /api/oauth/openai/callback`
