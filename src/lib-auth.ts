@@ -8,18 +8,15 @@ export function getRuntimeAuth() {
   const authMode = authModeFromEnv || cfg.authMode || "dev-bypass";
 
   const oauth = {
-    issuer: process.env.OPENAI_OAUTH_ISSUER || cfg.oauth?.issuer || "",
+    issuer:
+      process.env.OPENAI_OAUTH_ISSUER ||
+      cfg.oauth?.issuer ||
+      "https://auth.openai.com",
     clientId: process.env.OPENAI_OAUTH_CLIENT_ID || cfg.oauth?.clientId || "",
     clientSecret: process.env.OPENAI_OAUTH_CLIENT_SECRET || cfg.oauth?.clientSecret || "",
-    authUrl: process.env.OPENAI_OAUTH_AUTH_URL || cfg.oauth?.authUrl || "",
-    tokenUrl: process.env.OPENAI_OAUTH_TOKEN_URL || cfg.oauth?.tokenUrl || "",
-    userinfoUrl: process.env.OPENAI_OAUTH_USERINFO_URL || cfg.oauth?.userinfoUrl || "",
   };
 
-  const hasOpenAIOAuthConfig =
-    Boolean(oauth.clientId) &&
-    Boolean(oauth.clientSecret) &&
-    Boolean(oauth.issuer || oauth.authUrl);
+  const hasOpenAIOAuthConfig = Boolean(oauth.clientId) && Boolean(oauth.clientSecret);
 
   return {
     authMode,
@@ -41,11 +38,6 @@ export function getAuthOptions(): NextAuthOptions {
     issuer: runtime.oauth.issuer || undefined,
     clientId: runtime.oauth.clientId,
     clientSecret: runtime.oauth.clientSecret,
-    authorization: runtime.oauth.authUrl
-      ? { url: runtime.oauth.authUrl, params: { scope: "openid profile email" } }
-      : undefined,
-    token: runtime.oauth.tokenUrl ? { url: runtime.oauth.tokenUrl } : undefined,
-    userinfo: runtime.oauth.userinfoUrl ? { url: runtime.oauth.userinfoUrl } : undefined,
     profile(profile: any) {
       return {
         id: profile.sub || profile.id || "openai-user",

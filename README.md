@@ -1,55 +1,64 @@
 # VibeForge
 
-A modern, local-first **Codex/ChatGPT-style coding app** built with Next.js.
+A local-first, open-source **Codex-style coding cockpit** built with Next.js.
 
-## Highlights
+## First run (no manual env editing)
 
-- Modern 3-panel UI (threads, chat, code/actions)
-- Theme system (Midnight, Ocean, Sunset, Forest)
-- First-run onboarding wizard (no manual env editing required)
-- Full in-app Settings panel (reconfigure everything any time)
-- OpenAI chat integration + model selector
-- GitHub connection + one-click push of generated code snippets
-- One-click app updater (check + update)
-- Autonomous mode (safe/high-risk) + proactive mode toggles
+On first launch, the onboarding wizard configures everything in-app:
+- Theme
+- Auth mode (Local mode or OpenAI OAuth)
+- OpenAI API key
+- GitHub integration
+- Auto updater settings
+- Proactive + Autonomous mode settings
 
-## Quick start
+Settings are stored in: `config/onboarding.json` (local runtime file).
+
+---
+
+## OpenAI OAuth (simple flow)
+
+You only need:
+- OAuth Client ID
+- OAuth Client Secret
+
+In onboarding/settings, VibeForge shows the exact callback URL you must add in your OpenAI OAuth app:
+
+`<your-app-url>/api/auth/callback/openai`
+
+Then click **Continue with OpenAI** and sign in on OpenAI page.
+
+---
+
+## Run with Docker
+
+```bash
+docker compose up -d --build
+```
+
+## Run with Node.js
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open: `http://localhost:3000`
+---
 
-> First launch opens onboarding automatically.
+## Built-in updater
 
-## Docker
+- Check compares local SHA with remote branch
+- Update now runs fetch/reset/install/build (+ optional restart command)
 
-```bash
-docker compose up -d --build
-```
+---
 
-## Config storage
+## Endpoints
 
-Onboarding/settings are stored locally in:
-
-- `config/onboarding.json`
-
-This file is intentionally gitignored.
-
-## Core API routes
-
+- `GET /api/health`
 - `GET /api/setup/status`
 - `POST /api/setup/save`
-- `POST /api/chat`
-- `POST /api/github/connect`
-- `POST /api/github/push`
 - `GET /api/update/status`
 - `POST /api/update/apply`
+- `POST /api/github/connect`
+- `POST /api/github/push`
 - `POST /api/autonomy/run`
-- `GET /api/health`
-
-## Autonomous mode warning
-
-High-risk autonomous mode can execute AI-generated shell commands when enabled. Use only in trusted environments.

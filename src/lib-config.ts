@@ -84,10 +84,7 @@ export function getSafeConfig() {
     authMode: cfg.authMode,
     theme: cfg.theme,
     hasOpenAIApiKey: Boolean(cfg.openaiApiKey),
-    oauthConfigured:
-      Boolean(cfg.oauth?.clientId) &&
-      Boolean(cfg.oauth?.clientSecret) &&
-      Boolean(cfg.oauth?.issuer || cfg.oauth?.authUrl),
+    oauthConfigured: Boolean(cfg.oauth?.clientId) && Boolean(cfg.oauth?.clientSecret),
     updater: {
       branch: cfg.updater?.branch || "main",
       repoPath: cfg.updater?.repoPath || process.cwd(),

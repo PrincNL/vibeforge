@@ -36,6 +36,7 @@ const themes = {
 
 export default function Home() {
   const { data: session, status } = useSession();
+  const [oauthRedirectUrl, setOauthRedirectUrl] = useState("http://localhost:3000/api/auth/callback/openai");
 
   const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -44,12 +45,8 @@ export default function Home() {
   const [authMode, setAuthMode] = useState<"dev-bypass" | "openai-oauth">("dev-bypass");
   const [theme, setTheme] = useState<"midnight" | "ocean" | "sunset" | "forest">("midnight");
   const [storedApiKey, setStoredApiKey] = useState("");
-  const [oauthIssuer, setOauthIssuer] = useState("");
   const [oauthClientId, setOauthClientId] = useState("");
   const [oauthClientSecret, setOauthClientSecret] = useState("");
-  const [oauthAuthUrl, setOauthAuthUrl] = useState("");
-  const [oauthTokenUrl, setOauthTokenUrl] = useState("");
-  const [oauthUserInfoUrl, setOauthUserInfoUrl] = useState("");
   const [repoPath, setRepoPath] = useState("");
   const [repoBranch, setRepoBranch] = useState("main");
   const [restartCommand, setRestartCommand] = useState("");
@@ -116,12 +113,9 @@ export default function Home() {
       theme,
       openaiApiKey: storedApiKey,
       oauth: {
-        issuer: oauthIssuer,
+        issuer: "https://auth.openai.com",
         clientId: oauthClientId,
         clientSecret: oauthClientSecret,
-        authUrl: oauthAuthUrl,
-        tokenUrl: oauthTokenUrl,
-        userinfoUrl: oauthUserInfoUrl,
       },
       updater: { repoPath, branch: repoBranch, restartCommand, token: updateToken },
       github: {
@@ -245,6 +239,12 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      setOauthRedirectUrl(`${window.location.origin}/api/auth/callback/openai`);
+    }
+  }, []);
+
+  useEffect(() => {
     if (setup?.setupCompleted) checkUpdates();
   }, [setup?.setupCompleted]);
 
@@ -266,19 +266,11 @@ export default function Home() {
             theme={theme}
             setTheme={setTheme}
             storedApiKey={storedApiKey}
-            setStoredApiKey={setStoredApiKey}
-            oauthIssuer={oauthIssuer}
-            setOauthIssuer={setOauthIssuer}
-            oauthClientId={oauthClientId}
+            setStoredApiKey={setStoredApiKey}            oauthClientId={oauthClientId}
             setOauthClientId={setOauthClientId}
             oauthClientSecret={oauthClientSecret}
             setOauthClientSecret={setOauthClientSecret}
-            oauthAuthUrl={oauthAuthUrl}
-            setOauthAuthUrl={setOauthAuthUrl}
-            oauthTokenUrl={oauthTokenUrl}
-            setOauthTokenUrl={setOauthTokenUrl}
-            oauthUserInfoUrl={oauthUserInfoUrl}
-            setOauthUserInfoUrl={setOauthUserInfoUrl}
+            oauthRedirectUrl={oauthRedirectUrl}
             repoPath={repoPath}
             setRepoPath={setRepoPath}
             repoBranch={repoBranch}
@@ -431,20 +423,12 @@ export default function Home() {
               theme={theme}
               setTheme={setTheme}
               storedApiKey={storedApiKey}
-              setStoredApiKey={setStoredApiKey}
-              oauthIssuer={oauthIssuer}
-              setOauthIssuer={setOauthIssuer}
-              oauthClientId={oauthClientId}
+              setStoredApiKey={setStoredApiKey}              oauthClientId={oauthClientId}
               setOauthClientId={setOauthClientId}
               oauthClientSecret={oauthClientSecret}
               setOauthClientSecret={setOauthClientSecret}
-              oauthAuthUrl={oauthAuthUrl}
-              setOauthAuthUrl={setOauthAuthUrl}
-              oauthTokenUrl={oauthTokenUrl}
-              setOauthTokenUrl={setOauthTokenUrl}
-              oauthUserInfoUrl={oauthUserInfoUrl}
-              setOauthUserInfoUrl={setOauthUserInfoUrl}
-              repoPath={repoPath}
+            oauthRedirectUrl={oauthRedirectUrl}
+            repoPath={repoPath}
               setRepoPath={setRepoPath}
               repoBranch={repoBranch}
               setRepoBranch={setRepoBranch}
@@ -500,13 +484,15 @@ function SettingsForm(props: any) {
       </div>
 
       {props.authMode === "openai-oauth" && (
-        <div className="grid md:grid-cols-2 gap-2">
-          <input value={props.oauthIssuer} onChange={(e) => props.setOauthIssuer(e.target.value)} placeholder="OAuth issuer" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-          <input value={props.oauthClientId} onChange={(e) => props.setOauthClientId(e.target.value)} placeholder="OAuth client id" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-          <input type="password" value={props.oauthClientSecret} onChange={(e) => props.setOauthClientSecret(e.target.value)} placeholder="OAuth client secret" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-          <input value={props.oauthAuthUrl} onChange={(e) => props.setOauthAuthUrl(e.target.value)} placeholder="OAuth auth URL" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-          <input value={props.oauthTokenUrl} onChange={(e) => props.setOauthTokenUrl(e.target.value)} placeholder="OAuth token URL" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-          <input value={props.oauthUserInfoUrl} onChange={(e) => props.setOauthUserInfoUrl(e.target.value)} placeholder="OAuth userinfo URL" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+        <div className="space-y-2">
+          <div className="grid md:grid-cols-3 gap-2">
+            <input value={props.oauthClientId} onChange={(e) => props.setOauthClientId(e.target.value)} placeholder="OAuth client id" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+            <input type="password" value={props.oauthClientSecret} onChange={(e) => props.setOauthClientSecret(e.target.value)} placeholder="OAuth client secret" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+          </div>
+          <div className="rounded-lg border border-zinc-800 p-2 text-xs text-zinc-300">
+            Add this callback URL in your OpenAI OAuth app:<br />
+            <code className="text-emerald-300">{props.oauthRedirectUrl}</code>
+          </div>
         </div>
       )}
 
