@@ -45,6 +45,14 @@ export async function POST(req: Request) {
       });
     }
 
+    if (fixId === "oauth_connect") {
+      return NextResponse.json({
+        ok: true,
+        message:
+          "Open /api/oauth/openai/start (browser OAuth) or /api/oauth/openai/device/start (device auth), then rerun preflight.",
+      });
+    }
+
     if (fixId === "tailscale_show_start_commands") {
       return NextResponse.json({
         ok: true,
