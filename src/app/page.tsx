@@ -44,6 +44,11 @@ export default function Home() {
   const [deviceUrl, setDeviceUrl] = useState("https://auth.openai.com/codex/device");
   const [deviceCode, setDeviceCode] = useState("");
   const [deviceMessage, setDeviceMessage] = useState("");
+  const [autonomyGoal, setAutonomyGoal] = useState("");
+  const [autonomyMessage, setAutonomyMessage] = useState("");
+  const [autonomousOn, setAutonomousOn] = useState(false);
+  const [autonomyProjectDir, setAutonomyProjectDir] = useState("");
+  const [allowOutsideStorage, setAllowOutsideStorage] = useState(false);
 
   const latestCodeBlock = useMemo(() => {
     const last = [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
@@ -133,6 +138,32 @@ export default function Home() {
     }
     setUpdateMessage(data.message || "Updated");
     await checkUpdates();
+  }
+
+  async function stopAutonomy() {
+    await fetch("/api/autonomy/run", { method: "DELETE" });
+    setAutonomousOn(false);
+    setAutonomyMessage("Emergency stop activated.");
+  }
+
+  async function startAutonomyRun() {
+    const res = await fetch("/api/autonomy/run", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        goal: autonomyGoal || "Autonomously inspect and improve this project",
+        execute: true,
+        projectDir: autonomyProjectDir || undefined,
+        allowOutsideStorage,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setAutonomyMessage(data.message || "Autonomy failed to start");
+      return;
+    }
+    setAutonomousOn(true);
+    setAutonomyMessage(data.summary || "Autonomy started");
   }
 
   async function sendPrompt() {
@@ -225,6 +256,16 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [deviceSessionId]);
 
+  useEffect(() => {
+    const api = (window as any).vibeforgeDesktop;
+    if (!api?.onEmergencyStop) return;
+    const unsub = api.onEmergencyStop(() => {
+      setAutonomousOn(false);
+      setAutonomyMessage("Emergency stop (Ctrl+Alt+Shift+G) triggered.");
+    });
+    return () => { if (typeof unsub === "function") unsub(); };
+  }, []);
+
   if (setupLoading) return <main className="min-h-screen grid place-items-center text-zinc-300">Loading workspace…</main>;
 
   const currentTheme = themeBg[setup?.theme || "midnight"];
@@ -313,6 +354,18 @@ export default function Home() {
         <section className="md:col-span-4 glass rounded-3xl p-4 h-[84vh] overflow-auto">
           <h3 className="font-semibold">Live Code Pane</h3>
           <pre className="mt-2 rounded-2xl bg-black/50 border border-white/10 p-3 text-xs overflow-auto min-h-48">{latestCodeBlock}</pre>
+                  <div className="glass rounded-2xl p-3 mt-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium">Autonomous Mode</span>
+              <button onClick={() => (autonomousOn ? stopAutonomy() : startAutonomyRun())} className={`rounded-lg px-3 py-1 text-xs soft-hover ${autonomousOn ? "bg-red-500 text-black" : "bg-emerald-400 text-black"}`}>
+                {autonomousOn ? "Stop" : "Start"}
+              </button>
+            </div>
+            <div className="text-[11px] text-zinc-400">Emergency stop hotkey: Ctrl + Alt + Shift + G</div>
+            <input value={autonomyProjectDir} onChange={(e)=>setAutonomyProjectDir(e.target.value)} placeholder="Project directory (default: install dir)" className="w-full rounded-xl bg-black/30 border border-white/10 p-2 text-xs"/>
+            <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={allowOutsideStorage} onChange={(e)=>setAllowOutsideStorage(e.target.checked)} /> Allow storage outside install dir (explicit)</label>
+            {autonomyMessage && <pre className="text-xs whitespace-pre-wrap text-zinc-300">{autonomyMessage}</pre>}
+          </div>
         </section>
       </div>
     </main>

@@ -1,8 +1,18 @@
-const { app, BrowserWindow, shell } = require('electron');
+const { app, BrowserWindow, shell, globalShortcut } = require('electron');
 const path = require('node:path');
 
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.VIBEFORGE_DEV_URL || 'http://localhost:3000';
+
+async function triggerEmergencyStop(win) {
+  try {
+    await fetch(`${DEV_URL}/api/autonomy/run`, { method: 'DELETE' });
+  } catch {}
+
+  if (win && !win.isDestroyed()) {
+    win.webContents.send('autonomy:emergency-stop');
+  }
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -39,14 +49,24 @@ function createWindow() {
   if (isDev) {
     win.webContents.openDevTools({ mode: 'detach' });
   }
+
+  return win;
 }
 
 app.whenReady().then(() => {
-  createWindow();
+  const win = createWindow();
+
+  globalShortcut.register('CommandOrControl+Alt+Shift+G', () => {
+    triggerEmergencyStop(win);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {

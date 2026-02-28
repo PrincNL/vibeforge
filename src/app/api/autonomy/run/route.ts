@@ -1,24 +1,50 @@
 import { NextResponse } from "next/server";
-import { exec } from "node:child_process";
-import { promisify } from "node:util";
 import OpenAI from "openai";
+import path from "node:path";
 import { loadConfig } from "@/lib-config";
+import { getAutonomyState, requestStop, runCommands, setWorkspaceRoot } from "@/lib-autonomy";
 
-const execAsync = promisify(exec);
+export async function GET() {
+  return NextResponse.json({ ok: true, state: getAutonomyState() });
+}
+
+export async function DELETE() {
+  requestStop();
+  return NextResponse.json({ ok: true, message: "Autonomy stopped" });
+}
 
 export async function POST(req: Request) {
   const cfg = loadConfig();
   const body = await req.json();
+
   const goal = String(body.goal || "").trim();
   const execute = Boolean(body.execute);
+  const selectedDir = String(body.projectDir || "").trim();
+  const allowOutsideStorage = Boolean(body.allowOutsideStorage);
 
   if (!cfg.modes?.autonomousEnabled) {
     return NextResponse.json({ ok: false, message: "Autonomous mode is disabled." }, { status: 400 });
   }
-
   if (!goal) {
     return NextResponse.json({ ok: false, message: "Goal is required." }, { status: 400 });
   }
+
+  const installRoot = process.cwd();
+  const requestedRoot = path.resolve(selectedDir || installRoot);
+  const insideInstall = requestedRoot === installRoot || requestedRoot.startsWith(installRoot + path.sep);
+
+  if (!insideInstall && !allowOutsideStorage) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message:
+          "Blocked: writes outside install directory are not allowed unless user explicitly enables it.",
+      },
+      { status: 400 },
+    );
+  }
+
+  setWorkspaceRoot(requestedRoot);
 
   const apiKey = process.env.OPENAI_API_KEY || cfg.openaiApiKey;
   if (!apiKey) {
@@ -27,22 +53,22 @@ export async function POST(req: Request) {
 
   const client = new OpenAI({ apiKey });
   const result = await client.responses.create({
-    model: "gpt-4o-mini",
+    model: "gpt-5.3-codex",
     input: [
       {
         role: "system",
         content:
-          "You are an autonomous software operator. Return strict JSON with keys: summary, tasks(string[]), commands(string[]).",
+          "You are an autonomous software operator. Return strict JSON: {summary:string,tasks:string[],commands:string[]}. Keep commands safe and project-local.",
       },
       {
         role: "user",
-        content: `Goal: ${goal}\nRisk level: ${cfg.modes?.autonomousRiskLevel}\nProactive: ${cfg.modes?.proactive}`,
+        content: `Goal: ${goal}\nProjectDir: ${requestedRoot}\nRiskLevel: ${cfg.modes?.autonomousRiskLevel}`,
       },
     ],
+    reasoning: { effort: "medium" },
   });
 
   const text = result.output_text || "{}";
-
   let parsed: { summary?: string; tasks?: string[]; commands?: string[] } = {};
   try {
     parsed = JSON.parse(text);
@@ -50,18 +76,10 @@ export async function POST(req: Request) {
     parsed = { summary: text, tasks: [], commands: [] };
   }
 
-  let executed: Array<{ command: string; output: string }> = [];
+  let executed: Array<{ command: string; output: string; ok: boolean }> = [];
 
-  if (
-    execute &&
-    cfg.modes?.autonomousRiskLevel === "high-risk" &&
-    cfg.modes?.allowCommandExecution &&
-    Array.isArray(parsed.commands)
-  ) {
-    for (const command of parsed.commands.slice(0, 5)) {
-      const { stdout, stderr } = await execAsync(command, { cwd: process.cwd() });
-      executed.push({ command, output: `${stdout}\n${stderr}`.slice(0, 4000) });
-    }
+  if (execute && cfg.modes?.allowCommandExecution && Array.isArray(parsed.commands)) {
+    executed = await runCommands(parsed.commands.slice(0, 8), requestedRoot);
   }
 
   return NextResponse.json({
@@ -70,9 +88,6 @@ export async function POST(req: Request) {
     tasks: parsed.tasks || [],
     commands: parsed.commands || [],
     executed,
-    warning:
-      cfg.modes?.autonomousRiskLevel === "high-risk"
-        ? "High-risk mode enabled. Commands can change your system."
-        : "Safe mode enabled. No commands executed.",
+    state: getAutonomyState(),
   });
 }
