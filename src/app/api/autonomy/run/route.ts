@@ -12,17 +12,85 @@ function heuristicCommands(goal: string) {
   return commands;
 }
 
-export async function GET() {
+function getClientIp(req: Request) {
+  const forwarded = req.headers.get("x-forwarded-for") || "";
+  return forwarded.split(",")[0]?.trim() || "";
+}
+
+function isTailnetIp(ip: string) {
+  return /^100\./.test(ip) || /^fd7a:115c:a1e0:/i.test(ip);
+}
+
+function isLocalIp(ip: string) {
+  return ip === "127.0.0.1" || ip === "::1" || ip === "";
+}
+
+function authorizedRemote(req: Request) {
+  const cfg = loadConfig();
+  const tokenRequired = cfg.modes?.requireRemoteToken !== false;
+  const configured = process.env.VIBEFORGE_REMOTE_TOKEN || "";
+  if (!tokenRequired) return true;
+  if (!configured) return false;
+  const incoming = req.headers.get("x-vf-remote-token") || "";
+  return incoming.length > 0 && incoming === configured;
+}
+
+function normalizeProjectDir(rawDir: string, installRoot: string) {
+  const input = (rawDir || "").trim();
+  if (!input) return { ok: true as const, resolved: installRoot };
+
+  const hasWindowsDrive = /^[A-Za-z]:[\\/]/.test(input);
+  if (hasWindowsDrive && process.platform !== "win32") {
+    return {
+      ok: false as const,
+      message: `Windows-style path not supported on ${process.platform}: ${input}. Use a path on this host.`,
+    };
+  }
+
+  const normalizedInput = process.platform === "win32" ? input.replace(/\//g, "\\") : input.replace(/\\/g, "/");
+  const resolved = path.resolve(normalizedInput);
+  return { ok: true as const, resolved };
+}
+
+function isRemoteBlocked(req: Request, cfg: ReturnType<typeof loadConfig>, action: string) {
+  const ip = getClientIp(req);
+
+  if (cfg.modes?.remoteTailnetOnly !== false && !isLocalIp(ip) && !isTailnetIp(ip)) {
+    return NextResponse.json({ ok: false, message: `${action} blocked: non-tailnet remote request.` }, { status: 403 });
+  }
+
+  if (!isLocalIp(ip) && !authorizedRemote(req)) {
+    return NextResponse.json({ ok: false, message: `${action} blocked: remote token invalid or missing.` }, { status: 401 });
+  }
+
+  return null;
+}
+
+export async function GET(req: Request) {
+  const cfg = loadConfig();
+  const ip = getClientIp(req);
+
+  if (cfg.modes?.remoteTailnetOnly !== false && !isLocalIp(ip) && !isTailnetIp(ip)) {
+    return NextResponse.json({ ok: false, message: "Autonomy status blocked: non-tailnet remote request." }, { status: 403 });
+  }
+
   return NextResponse.json({ ok: true, state: getAutonomyState() });
 }
 
-export async function DELETE() {
+export async function DELETE(req: Request) {
+  const cfg = loadConfig();
+  const blocked = isRemoteBlocked(req, cfg, "Autonomy stop");
+  if (blocked) return blocked;
+
   requestStop();
   return NextResponse.json({ ok: true, message: "Autonomy stopped" });
 }
 
 export async function POST(req: Request) {
   const cfg = loadConfig();
+  const blocked = isRemoteBlocked(req, cfg, "Autonomy");
+  if (blocked) return blocked;
+
   const body = await req.json();
 
   const goal = String(body.goal || "").trim();
@@ -35,7 +103,12 @@ export async function POST(req: Request) {
   }
 
   const installRoot = process.cwd();
-  const requestedRoot = path.resolve(selectedDir || installRoot);
+  const normalized = normalizeProjectDir(selectedDir, installRoot);
+  if (!normalized.ok) {
+    return NextResponse.json({ ok: false, message: normalized.message }, { status: 400 });
+  }
+
+  const requestedRoot = normalized.resolved;
   const insideInstall = requestedRoot === installRoot || requestedRoot.startsWith(installRoot + path.sep);
 
   if (!insideInstall && !allowOutsideStorage) {
