@@ -1,6 +1,44 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { loadConfig } from "@/lib-config";
+import { promisify } from "node:util";
+import { execFile } from "node:child_process";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+const execFileAsync = promisify(execFile);
+
+async function runViaCodex(prompt: string, reasoning: string) {
+  const outFile = path.join("/tmp", `vibeforge-codex-${Date.now()}.txt`);
+
+  const effortMap: Record<string, string> = {
+    off: "minimal",
+    low: "low",
+    medium: "medium",
+    high: "high",
+  };
+
+  // codex CLI uses account auth (device login)
+  await execFileAsync(
+    "codex",
+    [
+      "exec",
+      "--skip-git-repo-check",
+      "-m",
+      "gpt-5.3-codex",
+      "-c",
+      `model_reasoning_effort=\"${effortMap[reasoning] || "low"}\"`,
+      "-o",
+      outFile,
+      prompt,
+    ],
+    { timeout: 180000 },
+  );
+
+  const text = await fs.readFile(outFile, "utf8");
+  await fs.unlink(outFile).catch(() => {});
+  return text.trim();
+}
 
 export async function POST(req: Request) {
   const cfg = loadConfig();
@@ -9,25 +47,48 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Connect with OpenAI first." }, { status: 401 });
   }
 
-  const apiKey = req.headers.get("x-openai-key") || cfg.openaiApiKey || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json(
-      { error: "No OpenAI API key provided. Add it in onboarding/settings or send x-openai-key header." },
-      { status: 400 },
-    );
-  }
-
   const body = await req.json();
   const messages = Array.isArray(body.messages) ? body.messages : [];
+  const reasoning = String(body.reasoning || "low");
 
-  const client = new OpenAI({ apiKey });
-  const effort = body.reasoning === "off" ? "minimal" : (body.reasoning || "low");
+  const lastUser = [...messages].reverse().find((m: any) => m.role === "user")?.content || "";
 
-  const response = await client.responses.create({
-    model: "gpt-5.3-codex",
-    input: messages,
-    reasoning: { effort },
-  });
+  const apiKey = req.headers.get("x-openai-key") || cfg.openaiApiKey || process.env.OPENAI_API_KEY;
 
-  return NextResponse.json({ text: response.output_text || "" });
+  // Preferred: direct OpenAI API key
+  if (apiKey) {
+    const client = new OpenAI({ apiKey });
+    const effort = (reasoning === "off" ? "minimal" : reasoning) as "minimal" | "low" | "medium" | "high";
+
+    const response = await client.responses.create({
+      model: "gpt-5.3-codex",
+      input: messages,
+      reasoning: { effort },
+    });
+
+    return NextResponse.json({ text: response.output_text || "" });
+  }
+
+  // Fallback: use codex account session (device auth)
+  if (cfg.oauth?.connected) {
+    try {
+      const text = await runViaCodex(lastUser, reasoning);
+      return NextResponse.json({ text });
+    } catch (error) {
+      return NextResponse.json(
+        {
+          error:
+            error instanceof Error
+              ? `Codex session fallback failed: ${error.message}`
+              : "Codex session fallback failed",
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  return NextResponse.json(
+    { error: "No OpenAI API key configured and no active Codex account session." },
+    { status: 400 },
+  );
 }
