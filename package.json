@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "npm run dev:desktop",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "dev:web": "next dev -p 3210",
+    "dev:desktop": "concurrently -k \"npm:dev:web\" \"wait-on tcp:3210 && cross-env VIBEFORGE_DEV_URL=http://localhost:3210 electron . --no-sandbox\"",
+    "start:web": "next start -p 3210",
+    "start:desktop": "concurrently -k \"npm:start:web\" \"wait-on tcp:3210 && cross-env VIBEFORGE_DEV_URL=http://localhost:3210 electron . --no-sandbox\""
   },
   "dependencies": {
     "next": "16.1.6",
@@ -20,9 +24,14 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.1.0",
+    "electron": "^40.6.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.6",
     "tailwindcss": "^4",
-    "typescript": "^5"
-  }
+    "typescript": "^5",
+    "wait-on": "^9.0.4"
+  },
+  "main": "electron/main.cjs"
 }

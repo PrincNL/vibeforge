@@ -1,56 +1,28 @@
 # VibeForge
 
-A local-first, open-source **Codex-style coding cockpit** built with Next.js.
+A local-first, open-source **Codex-style desktop app**.
 
-## First run (no manual env editing)
-
-On first launch, the onboarding wizard configures everything in-app:
-- Theme
-- Auth mode (Local mode or OpenAI OAuth)
-- OpenAI API key
-- GitHub integration
-- Auto updater settings
-- Proactive + Autonomous mode settings
-
-Settings are stored in: `config/onboarding.json` (local runtime file).
-
----
-
-## OpenAI OAuth (simple flow)
-
-You only need:
-- OAuth Client ID
-- OAuth Client Secret
-
-In onboarding/settings, VibeForge shows the exact callback URL you must add in your OpenAI OAuth app:
-
-`<your-app-url>/api/auth/callback/openai`
-
-Then click **Continue with OpenAI** and sign in on OpenAI page.
-
----
-
-## Run with Docker
-
-```bash
-docker compose up -d --build
-```
-
-## Run with Node.js
+## Development (desktop app)
 
 ```bash
 npm install
 npm run dev
 ```
 
----
+`npm run dev` now launches a **real desktop window** (Electron), not a browser tab.
+The desktop app hosts the internal local runtime on `http://localhost:3210`.
 
-## Built-in updater
+## Production runtime
 
-- Check compares local SHA with remote branch
-- Update now runs fetch/reset/install/build (+ optional restart command)
+```bash
+npm run build
+npm run start:desktop
+```
 
----
+## OAuth status
+
+- One-click OpenAI connect flow is implemented.
+- If OpenAI dynamic registration is blocked in your network (Cloudflare challenge), use the device-auth fallback path (next patch).
 
 ## Endpoints
 
@@ -62,3 +34,6 @@ npm run dev
 - `POST /api/github/connect`
 - `POST /api/github/push`
 - `POST /api/autonomy/run`
+- `GET /api/oauth/openai/start`
+- `GET /api/oauth/openai/callback`
+- `POST /api/oauth/openai/disconnect`
