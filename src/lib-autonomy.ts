@@ -7,17 +7,25 @@ const execAsync = promisify(exec);
 
 type Activity = { ts: string; type: "info" | "command" | "error"; text: string };
 
+type RunStatus = "idle" | "running" | "stopped";
+
 type AutonomyState = {
+  status: RunStatus;
   running: boolean;
   stopRequested: boolean;
   workspaceRoot: string;
+  installRoot: string;
+  currentCommand: string | null;
   activities: Activity[];
 };
 
 const state: AutonomyState = {
+  status: "idle",
   running: false,
   stopRequested: false,
   workspaceRoot: process.cwd(),
+  installRoot: process.cwd(),
+  currentCommand: null,
   activities: [],
 };
 
@@ -39,6 +47,8 @@ export function getAutonomyState() {
 export function requestStop() {
   state.stopRequested = true;
   state.running = false;
+  state.status = "stopped";
+  state.currentCommand = null;
   push("info", "Emergency stop requested");
 }
 
@@ -58,7 +68,7 @@ export async function runCommands(commands: string[], cwd?: string) {
 
   const targetDir = path.resolve(cwd || state.workspaceRoot);
   if (!isPathInside(targetDir, state.workspaceRoot)) {
-    throw new Error("Target directory is outside install/workspace root");
+    throw new Error("Target directory is outside workspace root");
   }
 
   if (!fs.existsSync(targetDir)) {
@@ -66,7 +76,9 @@ export async function runCommands(commands: string[], cwd?: string) {
   }
 
   state.running = true;
+  state.status = "running";
   state.stopRequested = false;
+  state.currentCommand = null;
   push("info", `Starting autonomous run in ${targetDir}`);
 
   const results: Array<{ command: string; output: string; ok: boolean }> = [];
@@ -81,20 +93,37 @@ export async function runCommands(commands: string[], cwd?: string) {
         continue;
       }
 
+      state.currentCommand = command;
       push("command", command);
       try {
         const { stdout, stderr } = await execAsync(command, { cwd: targetDir, timeout: 120000 });
         const out = `${stdout}\n${stderr}`.slice(0, 5000);
         results.push({ command, output: out, ok: true });
+        push("info", `Command ok: `);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        push("error", `Command failed: ${command} :: ${msg}`);
-        results.push({ command, output: msg, ok: false });
+        push("error", `Command failed:  :: `);
+        push("info", `Retrying once: `);
+        try {
+          const retry = await execAsync(command, { cwd: targetDir, timeout: 120000 });
+          const out = `\n`.slice(0, 5000);
+          push("info", `Recovered on retry: `);
+          results.push({ command, output: out, ok: true });
+        } catch (retryError) {
+          const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+          results.push({ command, output: `\nRetry failed: `, ok: false });
+        }
+      } finally {
+        state.currentCommand = null;
       }
     }
   } finally {
     state.running = false;
-    if (!state.stopRequested) push("info", "Autonomous run finished");
+    state.currentCommand = null;
+    if (!state.stopRequested) {
+      state.status = "idle";
+      push("info", "Autonomous run finished");
+    }
   }
 
   return results;
