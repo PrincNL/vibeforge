@@ -1,144 +1,7 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { loadConfig } from "@/lib-config";
-import { spawn, spawnSync } from "node:child_process";
-import fs from "node:fs/promises";
-import path from "node:path";
-import fsSync from "node:fs";
-import os from "node:os";
-
-type CmdCandidate = { cmd: string; argsPrefix: string[]; useShell: boolean };
-
-function pushIfExists(candidates: CmdCandidate[], cmd: string, argsPrefix: string[] = [], useShell = false) {
-  if (fsSync.existsSync(cmd)) {
-    candidates.push({ cmd, argsPrefix, useShell });
-  }
-}
-
-function buildCodexCandidates(): CmdCandidate[] {
-  const candidates: CmdCandidate[] = [];
-  const isWin = process.platform === "win32";
-
-  const custom = process.env.CODEX_CLI_PATH;
-  if (custom) {
-    if (isWin) {
-      if (path.extname(custom)) {
-        candidates.push({ cmd: custom, argsPrefix: [], useShell: true });
-      } else {
-        pushIfExists(candidates, `${custom}.cmd`, [], true);
-        pushIfExists(candidates, `${custom}.exe`, [], false);
-        pushIfExists(candidates, custom, [], true);
-      }
-    } else {
-      candidates.push({ cmd: custom, argsPrefix: [], useShell: false });
-    }
-  }
-
-  const finder = isWin ? "where" : "which";
-  const found = spawnSync(finder, ["codex"], { encoding: "utf8", shell: isWin });
-  if (found.status === 0 && found.stdout) {
-    const lines = found.stdout
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    for (const line of lines) {
-      if (isWin) {
-        const ext = path.extname(line).toLowerCase();
-        if (ext) {
-          candidates.push({ cmd: line, argsPrefix: [], useShell: ext === ".cmd" || ext === ".bat" });
-        } else {
-          pushIfExists(candidates, `${line}.cmd`, [], true);
-          pushIfExists(candidates, `${line}.bat`, [], true);
-          pushIfExists(candidates, `${line}.exe`, [], false);
-        }
-      } else {
-        candidates.push({ cmd: line, argsPrefix: [], useShell: false });
-      }
-    }
-  }
-
-  // plain command name
-  candidates.push({ cmd: "codex", argsPrefix: [], useShell: isWin });
-
-  // npx fallback
-  candidates.push({
-    cmd: isWin ? "npx.cmd" : "npx",
-    argsPrefix: ["-y", "@openai/codex"],
-    useShell: isWin,
-  });
-
-  const seen = new Set<string>();
-  return candidates.filter((c) => {
-    const key = `${c.cmd}|${c.argsPrefix.join(" ")}|${c.useShell}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-}
-
-async function tryCodex(candidate: CmdCandidate, prompt: string, reasoning: string, outFile: string) {
-  const effortMap: Record<string, string> = {
-    off: "minimal",
-    low: "low",
-    medium: "medium",
-    high: "high",
-  };
-
-  const args = [
-    ...candidate.argsPrefix,
-    "exec",
-    "--skip-git-repo-check",
-    "-m",
-    "gpt-5.3-codex",
-    "-c",
-    `model_reasoning_effort=\"${effortMap[reasoning] || "low"}\"`,
-    "-o",
-    outFile,
-    "-",
-  ];
-
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(candidate.cmd, args, {
-      shell: candidate.useShell,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: process.env,
-    });
-
-    let stderr = "";
-    child.stderr.on("data", (d) => (stderr += d.toString()));
-
-    child.on("error", (err) => reject(err));
-    child.on("close", (code) => {
-      if (code === 0) return resolve();
-      reject(new Error(stderr || `codex exited with code ${code}`));
-    });
-
-    child.stdin.write(prompt || "Help me with this task.");
-    child.stdin.end();
-  });
-}
-
-async function runViaCodex(prompt: string, reasoning: string) {
-  const outFile = path.join(os.tmpdir(), `vibeforge-codex-${Date.now()}.txt`);
-  const candidates = buildCodexCandidates();
-
-  let lastError: unknown = null;
-  for (const c of candidates) {
-    try {
-      await tryCodex(c, prompt, reasoning, outFile);
-      const text = await fs.readFile(outFile, "utf8");
-      await fs.unlink(outFile).catch(() => {});
-      return text.trim();
-    } catch (err) {
-      lastError = err;
-    }
-  }
-
-  throw lastError instanceof Error
-    ? new Error(`No working codex executable found. Last error: ${lastError.message}`)
-    : new Error("No working codex executable found.");
-}
+import { runViaCodex } from "@/lib-codex";
 
 export async function POST(req: Request) {
   const cfg = loadConfig();
@@ -164,19 +27,19 @@ export async function POST(req: Request) {
       reasoning: { effort },
     });
 
-    return NextResponse.json({ text: response.output_text || "" });
+    return NextResponse.json({ text: response.output_text || "", meta: { executor: "openai-api-key" } });
   }
 
   if (cfg.oauth?.connected) {
     try {
-      const text = await runViaCodex(lastUser, reasoning);
-      return NextResponse.json({ text });
+      const result = await runViaCodex(lastUser, reasoning);
+      return NextResponse.json({ text: result.text, meta: { executor: result.commandTried } });
     } catch (error) {
       return NextResponse.json(
         {
           error:
             error instanceof Error
-              ? `Codex session fallback failed: ${error.message}`
+              ? `Codex session fallback failed:\n${error.message}`
               : "Codex session fallback failed",
         },
         { status: 500 },
