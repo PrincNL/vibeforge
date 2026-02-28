@@ -9,24 +9,17 @@ export type AppConfig = {
   oauth?: {
     issuer?: string;
     clientId?: string;
-    clientSecret?: string;
-    authUrl?: string;
-    tokenUrl?: string;
-    userinfoUrl?: string;
+    connected?: boolean;
+    email?: string;
+    accessToken?: string;
+    refreshToken?: string;
+    expiresAt?: number;
+    pendingState?: string;
+    pendingCodeVerifier?: string;
+    pendingRedirectUri?: string;
   };
-  updater?: {
-    repoPath?: string;
-    branch?: string;
-    restartCommand?: string;
-    token?: string;
-  };
-  github?: {
-    token?: string;
-    owner?: string;
-    repo?: string;
-    branch?: string;
-    defaultPath?: string;
-  };
+  updater?: { repoPath?: string; branch?: string; restartCommand?: string; token?: string };
+  github?: { token?: string; owner?: string; repo?: string; branch?: string; defaultPath?: string };
   modes?: {
     proactive?: boolean;
     autonomousEnabled?: boolean;
@@ -43,15 +36,10 @@ const defaultConfig: AppConfig = {
   authMode: "dev-bypass",
   theme: "midnight",
   openaiApiKey: "",
-  oauth: {},
+  oauth: { issuer: "https://auth.openai.com", connected: false },
   updater: { branch: "main" },
   github: { branch: "main", defaultPath: "generated/patch.ts" },
-  modes: {
-    proactive: false,
-    autonomousEnabled: false,
-    autonomousRiskLevel: "safe",
-    allowCommandExecution: false,
-  },
+  modes: { proactive: false, autonomousEnabled: false, autonomousRiskLevel: "safe", allowCommandExecution: false },
 };
 
 export function loadConfig(): AppConfig {
@@ -84,7 +72,8 @@ export function getSafeConfig() {
     authMode: cfg.authMode,
     theme: cfg.theme,
     hasOpenAIApiKey: Boolean(cfg.openaiApiKey),
-    oauthConfigured: Boolean(cfg.oauth?.clientId) && Boolean(cfg.oauth?.clientSecret),
+    oauthConnected: Boolean(cfg.oauth?.connected),
+    oauthEmail: cfg.oauth?.email || "",
     updater: {
       branch: cfg.updater?.branch || "main",
       repoPath: cfg.updater?.repoPath || process.cwd(),

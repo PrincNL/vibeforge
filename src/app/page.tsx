@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { signIn, signOut, useSession } from "next-auth/react";
 
 type ChatMsg = { role: "user" | "assistant"; content: string };
 type SetupStatus = {
@@ -9,7 +8,8 @@ type SetupStatus = {
   authMode: "dev-bypass" | "openai-oauth";
   theme: "midnight" | "ocean" | "sunset" | "forest";
   hasOpenAIApiKey: boolean;
-  oauthConfigured: boolean;
+  oauthConnected: boolean;
+  oauthEmail: string;
   updater: { branch: string; repoPath: string; hasToken: boolean; hasRestartCommand: boolean };
   github: { connected: boolean; owner: string; repo: string; branch: string; defaultPath: string };
   modes: {
@@ -35,8 +35,7 @@ const themes = {
 };
 
 export default function Home() {
-  const { data: session, status } = useSession();
-  const [oauthRedirectUrl, setOauthRedirectUrl] = useState("http://localhost:3000/api/auth/callback/openai");
+  const [oauthRedirectUrl, setOauthRedirectUrl] = useState("http://localhost:3000/api/oauth/openai/callback");
 
   const [setup, setSetup] = useState<SetupStatus | null>(null);
   const [setupLoading, setSetupLoading] = useState(true);
@@ -240,7 +239,7 @@ export default function Home() {
 
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setOauthRedirectUrl(`${window.location.origin}/api/auth/callback/openai`);
+      setOauthRedirectUrl(`${window.location.origin}/api/oauth/openai/callback`);
     }
   }, []);
 
@@ -248,7 +247,7 @@ export default function Home() {
     if (setup?.setupCompleted) checkUpdates();
   }, [setup?.setupCompleted]);
 
-  if (setupLoading || (status === "loading" && setup?.authMode === "openai-oauth")) {
+  if (setupLoading) {
     return <main className="min-h-screen bg-zinc-950 text-zinc-300 grid place-items-center">Loading...</main>;
   }
 
@@ -308,15 +307,15 @@ export default function Home() {
   }
 
   const requiresOAuth = setup.authMode === "openai-oauth";
-  if (requiresOAuth && !session) {
+  if (requiresOAuth && !setup.oauthConnected) {
     return (
       <main className={`min-h-screen ${currentTheme} grid place-items-center p-6`}>
         <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-3">
           <h1 className="text-2xl font-semibold">VibeForge</h1>
-          <p className="text-sm text-zinc-400">Sign in with OpenAI OAuth to continue.</p>
-          <button onClick={() => signIn("openai")} className="w-full rounded-xl bg-emerald-500 px-4 py-2 text-black font-medium">
-            Continue with OpenAI
-          </button>
+          <p className="text-sm text-zinc-400">Connect your OpenAI account to continue.</p>
+          <a href="/api/oauth/openai/start" className="block w-full text-center rounded-xl bg-emerald-500 px-4 py-2 text-black font-medium">
+            Connect with OpenAI
+          </a>
         </div>
       </main>
     );
@@ -362,7 +361,7 @@ export default function Home() {
           </div>
 
           {requiresOAuth && (
-            <button onClick={() => signOut()} className="w-full rounded-lg border border-zinc-700 px-3 py-1 text-sm hover:bg-zinc-800">Sign out</button>
+            <div className="text-xs text-zinc-400">Connected as {setup.oauthEmail || "OpenAI account"}</div>
           )}
         </aside>
 
@@ -458,6 +457,12 @@ export default function Home() {
             <div className="flex items-center gap-2">
               <button onClick={saveSettings} className="rounded bg-emerald-500 px-3 py-1 text-black text-sm font-medium">Save settings</button>
               {saveMessage && <span className="text-xs text-zinc-300">{saveMessage}</span>}
+              {requiresOAuth && (
+                <button
+                  onClick={async () => { await fetch("/api/oauth/openai/disconnect", { method: "POST" }); await refreshSetup(); }}
+                  className="rounded border border-zinc-700 px-3 py-1 text-xs"
+                >Disconnect OpenAI</button>
+              )}
             </div>
           </div>
         </div>
@@ -484,15 +489,10 @@ function SettingsForm(props: any) {
       </div>
 
       {props.authMode === "openai-oauth" && (
-        <div className="space-y-2">
-          <div className="grid md:grid-cols-3 gap-2">
-            <input value={props.oauthClientId} onChange={(e) => props.setOauthClientId(e.target.value)} placeholder="OAuth client id" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-            <input type="password" value={props.oauthClientSecret} onChange={(e) => props.setOauthClientSecret(e.target.value)} placeholder="OAuth client secret" className="rounded-lg bg-zinc-800 p-2 text-sm" />
-          </div>
-          <div className="rounded-lg border border-zinc-800 p-2 text-xs text-zinc-300">
-            Add this callback URL in your OpenAI OAuth app:<br />
-            <code className="text-emerald-300">{props.oauthRedirectUrl}</code>
-          </div>
+        <div className="rounded-lg border border-zinc-800 p-3 text-xs text-zinc-300 space-y-2">
+          <div>One-click flow enabled. Click <b>Connect with OpenAI</b> on login screen.</div>
+          <div>If provider requires callback allowlist, use:</div>
+          <code className="text-emerald-300">{props.oauthRedirectUrl}</code>
         </div>
       )}
 
