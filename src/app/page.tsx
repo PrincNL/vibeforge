@@ -236,8 +236,9 @@ export default function Home() {
     setDeviceSessionId(data.id);
     setDeviceUrl(data.url || "https://auth.openai.com/codex/device");
     setDeviceCode(data.code || "");
-    setDeviceMessage("Open the link and enter the code, then click Check status.");
+    setDeviceMessage("Opening OpenAI device page... fetching your code.");
     window.open(data.url || "https://auth.openai.com/codex/device", "_blank");
+    setTimeout(() => { checkDeviceConnect(); }, 1200);
   }
 
   async function checkDeviceConnect() {
@@ -286,6 +287,14 @@ export default function Home() {
   useEffect(() => {
     if (setup?.setupCompleted) checkUpdates();
   }, [setup?.setupCompleted]);
+
+  useEffect(() => {
+    if (!deviceSessionId) return;
+    const t = setInterval(() => {
+      checkDeviceConnect();
+    }, 2000);
+    return () => clearInterval(t);
+  }, [deviceSessionId]);
 
   if (setupLoading) {
     return <main className="min-h-screen bg-zinc-950 text-zinc-300 grid place-items-center">Loading...</main>;
@@ -358,7 +367,8 @@ export default function Home() {
           </button>
           <div className="rounded-lg border border-zinc-800 p-3 text-xs text-zinc-300 space-y-2">
             <div>1) Open: <a className="text-emerald-300 underline" href={deviceUrl} target="_blank" rel="noreferrer">{deviceUrl}</a></div>
-            <div>2) Enter code: <code className="text-emerald-300">{deviceCode || "(waiting...)"}</code></div>
+            <div>2) Enter this code: <code className="text-emerald-300">{deviceCode || "(loading code...)"}</code></div>
+            <div className="text-zinc-400">If code stays empty, click Check status once.</div>
             <button onClick={checkDeviceConnect} className="rounded border border-zinc-700 px-2 py-1">Check status</button>
             {deviceMessage && <div>{deviceMessage}</div>}
           </div>
