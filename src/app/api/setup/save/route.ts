@@ -9,14 +9,10 @@ export async function POST(req: Request) {
     const next: AppConfig = {
       ...current,
       ...body,
-      oauth: {
-        ...(current.oauth || {}),
-        ...(body.oauth || {}),
-      },
-      updater: {
-        ...(current.updater || {}),
-        ...(body.updater || {}),
-      },
+      oauth: { ...(current.oauth || {}), ...(body.oauth || {}) },
+      updater: { ...(current.updater || {}), ...(body.updater || {}) },
+      github: { ...(current.github || {}), ...(body.github || {}) },
+      modes: { ...(current.modes || {}), ...(body.modes || {}) },
       setupCompleted: true,
     };
 

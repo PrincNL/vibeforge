@@ -1,60 +1,55 @@
 # VibeForge
 
-A local-first, open-source **Codex-style coding cockpit** built with Next.js.
+A modern, local-first **Codex/ChatGPT-style coding app** built with Next.js.
 
-## Zero-manual setup
+## Highlights
 
-You no longer need to manually edit `.env`.
-On first launch, VibeForge opens a built-in onboarding wizard where users configure:
-- Auth mode (Local mode or OpenAI OAuth)
-- OpenAI API key
-- Auto-updater settings (repo path/branch/restart command/token)
+- Modern 3-panel UI (threads, chat, code/actions)
+- Theme system (Midnight, Ocean, Sunset, Forest)
+- First-run onboarding wizard (no manual env editing required)
+- Full in-app Settings panel (reconfigure everything any time)
+- OpenAI chat integration + model selector
+- GitHub connection + one-click push of generated code snippets
+- One-click app updater (check + update)
+- Autonomous mode (safe/high-risk) + proactive mode toggles
 
-Settings are stored in:
-- `config/onboarding.json`
-
----
-
-## Run with Docker
-
-```bash
-docker compose up -d --build
-```
-
-Open: http://localhost:3000
-
-## Run with Node.js
+## Quick start
 
 ```bash
 npm install
 npm run dev
 ```
 
----
+Open: `http://localhost:3000`
 
-## Built-in updater
+> First launch opens onboarding automatically.
 
-The app includes **Check** + **Update now** in the sidebar:
-1. Check compares local SHA vs `origin/<branch>`
-2. Update applies:
-   - `git fetch`
-   - `git reset --hard origin/<branch>`
-   - `npm install`
-   - `npm run build`
-   - optional restart command
+## Docker
 
----
+```bash
+docker compose up -d --build
+```
 
-## Endpoints
+## Config storage
 
-- `GET /api/health`
+Onboarding/settings are stored locally in:
+
+- `config/onboarding.json`
+
+This file is intentionally gitignored.
+
+## Core API routes
+
 - `GET /api/setup/status`
 - `POST /api/setup/save`
+- `POST /api/chat`
+- `POST /api/github/connect`
+- `POST /api/github/push`
 - `GET /api/update/status`
 - `POST /api/update/apply`
+- `POST /api/autonomy/run`
+- `GET /api/health`
 
----
+## Autonomous mode warning
 
-## Optional env overrides
-
-You can still use env vars (see `.env.example`), but they are no longer required for first-run onboarding.
+High-risk autonomous mode can execute AI-generated shell commands when enabled. Use only in trusted environments.
