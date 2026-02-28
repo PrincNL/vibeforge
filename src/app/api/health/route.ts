@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { authRuntime } from "@/lib-auth";
+import { getRuntimeAuth } from "@/lib-auth";
+import { getSafeConfig } from "@/lib-config";
 
 export async function GET() {
+  const runtime = getRuntimeAuth();
+  const config = getSafeConfig();
+
   return NextResponse.json({
     ok: true,
-    mode: authRuntime.devBypassLogin ? "dev-bypass" : "oauth",
-    oauthConfigured: authRuntime.hasOpenAIOAuthConfig,
+    mode: runtime.devBypassLogin ? "dev-bypass" : "oauth",
+    oauthConfigured: runtime.hasOpenAIOAuthConfig,
+    setupCompleted: config.setupCompleted,
   });
 }

@@ -15,7 +15,18 @@ type RepoUpdateStatus = {
   message?: string;
 };
 
-const DEV_BYPASS = process.env.NEXT_PUBLIC_DEV_BYPASS_LOGIN === "true";
+type SetupStatus = {
+  setupCompleted: boolean;
+  authMode: "dev-bypass" | "openai-oauth";
+  hasOpenAIApiKey: boolean;
+  oauthConfigured: boolean;
+  updater: {
+    branch: string;
+    repoPath: string;
+    hasToken: boolean;
+    hasRestartCommand: boolean;
+  };
+};
 
 export default function Home() {
   const { data: session, status } = useSession();
@@ -25,6 +36,23 @@ export default function Home() {
   const [prompt, setPrompt] = useState("");
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const [setupStatus, setSetupStatus] = useState<SetupStatus | null>(null);
+  const [setupLoading, setSetupLoading] = useState(true);
+  const [setupSaving, setSetupSaving] = useState(false);
+
+  const [authMode, setAuthMode] = useState<"dev-bypass" | "openai-oauth">("dev-bypass");
+  const [storedApiKey, setStoredApiKey] = useState("");
+  const [oauthIssuer, setOauthIssuer] = useState("");
+  const [oauthClientId, setOauthClientId] = useState("");
+  const [oauthClientSecret, setOauthClientSecret] = useState("");
+  const [oauthAuthUrl, setOauthAuthUrl] = useState("");
+  const [oauthTokenUrl, setOauthTokenUrl] = useState("");
+  const [oauthUserInfoUrl, setOauthUserInfoUrl] = useState("");
+  const [repoPath, setRepoPath] = useState("");
+  const [repoBranch, setRepoBranch] = useState("main");
+  const [restartCommand, setRestartCommand] = useState("");
+  const [setupMessage, setSetupMessage] = useState("");
 
   const [updateStatus, setUpdateStatus] = useState<RepoUpdateStatus | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -46,6 +74,58 @@ export default function Home() {
       { name: "Patch", status: loading ? "running" : "done", detail: lastAssistant.includes("```") ? "Code snippets available" : "No code snippets yet" },
     ];
   }, [loading, messages]);
+
+  async function loadSetupStatus() {
+    setSetupLoading(true);
+    try {
+      const res = await fetch("/api/setup/status", { cache: "no-store" });
+      const data = await res.json();
+      setSetupStatus(data);
+      setAuthMode(data.authMode || "dev-bypass");
+      setRepoBranch(data.updater?.branch || "main");
+      setRepoPath(data.updater?.repoPath || "");
+    } finally {
+      setSetupLoading(false);
+    }
+  }
+
+  async function saveSetup() {
+    setSetupSaving(true);
+    setSetupMessage("");
+    try {
+      const res = await fetch("/api/setup/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          authMode,
+          openaiApiKey: storedApiKey,
+          oauth: {
+            issuer: oauthIssuer,
+            clientId: oauthClientId,
+            clientSecret: oauthClientSecret,
+            authUrl: oauthAuthUrl,
+            tokenUrl: oauthTokenUrl,
+            userinfoUrl: oauthUserInfoUrl,
+          },
+          updater: {
+            repoPath,
+            branch: repoBranch,
+            restartCommand,
+            token: updateToken,
+          },
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Failed to save setup");
+      setSetupMessage("Setup saved. You can start using the app now.");
+      await loadSetupStatus();
+      await checkForUpdates();
+    } catch (err) {
+      setSetupMessage(`Setup failed: ${(err as Error).message}`);
+    } finally {
+      setSetupSaving(false);
+    }
+  }
 
   async function checkForUpdates() {
     setCheckingUpdate(true);
@@ -84,14 +164,19 @@ export default function Home() {
   }
 
   useEffect(() => {
+    loadSetupStatus();
+  }, []);
+
+  useEffect(() => {
+    if (!setupStatus?.setupCompleted) return;
     checkForUpdates();
     const interval = setInterval(checkForUpdates, 60_000);
     return () => clearInterval(interval);
-  }, []);
+  }, [setupStatus?.setupCompleted]);
 
   async function sendPrompt() {
     if (!prompt.trim()) return;
-    if (!apiKey && !DEV_BYPASS) return;
+    if (!apiKey && !setupStatus?.hasOpenAIApiKey) return;
 
     const next = [...messages, { role: "user" as const, content: prompt }];
     setMessages(next);
@@ -118,15 +203,63 @@ export default function Home() {
     }
   }
 
-  if (status === "loading" && !DEV_BYPASS) return <main className="p-8 text-zinc-300">Loading...</main>;
+  if (setupLoading || (status === "loading" && setupStatus?.authMode === "openai-oauth")) {
+    return <main className="p-8 text-zinc-300">Loading...</main>;
+  }
 
-  const isLoggedIn = DEV_BYPASS || !!session;
+  if (!setupStatus?.setupCompleted) {
+    return (
+      <main className="min-h-screen bg-zinc-950 text-zinc-100 p-6 grid place-items-center">
+        <div className="w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
+          <h1 className="text-2xl font-semibold">Welcome to VibeForge</h1>
+          <p className="text-sm text-zinc-400">One-time onboarding. Configure everything here instead of editing env files.</p>
+
+          <div className="grid gap-2">
+            <label className="text-xs text-zinc-400">Auth mode</label>
+            <select value={authMode} onChange={(e) => setAuthMode(e.target.value as any)} className="rounded-lg bg-zinc-800 p-2 text-sm">
+              <option value="dev-bypass">Local mode (no login)</option>
+              <option value="openai-oauth">OpenAI OAuth login</option>
+            </select>
+          </div>
+
+          <div className="grid gap-2">
+            <label className="text-xs text-zinc-400">Default OpenAI API key (optional)</label>
+            <input type="password" value={storedApiKey} onChange={(e) => setStoredApiKey(e.target.value)} placeholder="sk-..." className="rounded-lg bg-zinc-800 p-2 text-sm" />
+          </div>
+
+          {authMode === "openai-oauth" && (
+            <div className="grid md:grid-cols-2 gap-2">
+              <input value={oauthIssuer} onChange={(e) => setOauthIssuer(e.target.value)} placeholder="OAuth issuer" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+              <input value={oauthClientId} onChange={(e) => setOauthClientId(e.target.value)} placeholder="OAuth client id" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+              <input type="password" value={oauthClientSecret} onChange={(e) => setOauthClientSecret(e.target.value)} placeholder="OAuth client secret" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+              <input value={oauthAuthUrl} onChange={(e) => setOauthAuthUrl(e.target.value)} placeholder="Authorization URL" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+              <input value={oauthTokenUrl} onChange={(e) => setOauthTokenUrl(e.target.value)} placeholder="Token URL" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+              <input value={oauthUserInfoUrl} onChange={(e) => setOauthUserInfoUrl(e.target.value)} placeholder="Userinfo URL" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+            </div>
+          )}
+
+          <div className="grid md:grid-cols-2 gap-2">
+            <input value={repoPath} onChange={(e) => setRepoPath(e.target.value)} placeholder="Repo path (optional)" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+            <input value={repoBranch} onChange={(e) => setRepoBranch(e.target.value)} placeholder="Update branch (main)" className="rounded-lg bg-zinc-800 p-2 text-sm" />
+            <input value={restartCommand} onChange={(e) => setRestartCommand(e.target.value)} placeholder="Restart command (optional)" className="rounded-lg bg-zinc-800 p-2 text-sm md:col-span-2" />
+          </div>
+
+          <button onClick={saveSetup} disabled={setupSaving} className="rounded-xl bg-emerald-500 px-4 py-2 font-medium text-black disabled:opacity-50">{setupSaving ? "Saving..." : "Complete onboarding"}</button>
+          {setupMessage && <p className="text-xs text-zinc-300">{setupMessage}</p>}
+        </div>
+      </main>
+    );
+  }
+
+  const requiresOAuth = setupStatus.authMode === "openai-oauth";
+  const isLoggedIn = !requiresOAuth || !!session;
+
   if (!isLoggedIn) {
     return (
       <main className="min-h-screen bg-zinc-950 text-white grid place-items-center p-8">
         <div className="max-w-md w-full rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-4">
           <h1 className="text-2xl font-semibold">VibeForge</h1>
-          <p className="text-zinc-400 text-sm">Sign in with OpenAI OAuth to use your local Codex-style coding cockpit.</p>
+          <p className="text-zinc-400 text-sm">Sign in with OpenAI OAuth to continue.</p>
           <button onClick={() => signIn("openai")} className="w-full rounded-xl bg-emerald-500 px-4 py-2 font-medium text-black hover:bg-emerald-400">Continue with OpenAI</button>
         </div>
       </main>
@@ -148,8 +281,8 @@ export default function Home() {
 
           <div>
             <h3 className="text-xs uppercase tracking-wide text-zinc-400">Session</h3>
-            <p className="mt-2 text-xs text-zinc-400">{DEV_BYPASS ? "Running in local dev bypass mode" : `Signed in as ${session?.user?.name || session?.user?.email}`}</p>
-            {!DEV_BYPASS && <button onClick={() => signOut()} className="mt-3 rounded-lg border border-zinc-700 px-3 py-1 text-sm hover:bg-zinc-800">Sign out</button>}
+            <p className="mt-2 text-xs text-zinc-400">{requiresOAuth ? `Signed in as ${session?.user?.name || session?.user?.email}` : "Running in local mode"}</p>
+            {requiresOAuth && <button onClick={() => signOut()} className="mt-3 rounded-lg border border-zinc-700 px-3 py-1 text-sm hover:bg-zinc-800">Sign out</button>}
           </div>
 
           <div className="space-y-2">
@@ -158,18 +291,14 @@ export default function Home() {
               <option>gpt-4o-mini</option><option>gpt-4o</option><option>gpt-5-mini</option><option>gpt-5</option>
             </select>
 
-            <label className="text-xs text-zinc-400">OpenAI API key</label>
-            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={DEV_BYPASS ? "Optional if OPENAI_API_KEY is in .env" : "sk-..."} className="w-full rounded-lg bg-zinc-800 p-2 text-sm" />
+            <label className="text-xs text-zinc-400">OpenAI API key (session override)</label>
+            <input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={setupStatus?.hasOpenAIApiKey ? "Optional (already configured in onboarding)" : "sk-..."} className="w-full rounded-lg bg-zinc-800 p-2 text-sm" />
           </div>
 
           <div className="space-y-2 rounded-xl border border-zinc-800 p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">App Updates</h3>
-              {updateStatus?.hasUpdate ? (
-                <span className="text-[10px] rounded bg-emerald-900/60 px-2 py-1 text-emerald-300">Update available</span>
-              ) : (
-                <span className="text-[10px] rounded bg-zinc-800 px-2 py-1 text-zinc-400">Up to date</span>
-              )}
+              {updateStatus?.hasUpdate ? <span className="text-[10px] rounded bg-emerald-900/60 px-2 py-1 text-emerald-300">Update available</span> : <span className="text-[10px] rounded bg-zinc-800 px-2 py-1 text-zinc-400">Up to date</span>}
             </div>
             <p className="text-xs text-zinc-400">Current: {updateStatus?.current || "..."} · Remote: {updateStatus?.remote || "..."}</p>
             <div className="flex gap-2">

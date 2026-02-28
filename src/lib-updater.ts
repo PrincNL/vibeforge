@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import { promisify } from "node:util";
+import { loadConfig } from "@/lib-config";
 
 const execAsync = promisify(exec);
 
@@ -17,17 +18,26 @@ function shortSha(value: string) {
   return value.trim().slice(0, 7);
 }
 
+function getUpdaterRuntime() {
+  const cfg = loadConfig();
+  return {
+    repoPath: process.env.APP_REPO_PATH || cfg.updater?.repoPath || process.cwd(),
+    branch: process.env.APP_UPDATE_BRANCH || cfg.updater?.branch || "main",
+    restartCmd: process.env.APP_RESTART_COMMAND || cfg.updater?.restartCommand || "",
+    token: process.env.APP_UPDATE_TOKEN || cfg.updater?.token || "",
+  };
+}
+
 export async function getUpdateStatus(): Promise<UpdateStatus> {
-  const repoPath = process.env.APP_REPO_PATH || process.cwd();
-  const branch = process.env.APP_UPDATE_BRANCH || "main";
+  const runtime = getUpdaterRuntime();
 
   try {
-    const { stdout: currentRaw } = await execAsync("git rev-parse HEAD", { cwd: repoPath });
+    const { stdout: currentRaw } = await execAsync("git rev-parse HEAD", { cwd: runtime.repoPath });
     const current = currentRaw.trim();
 
-    await execAsync(`git fetch origin ${branch}`, { cwd: repoPath });
-    const { stdout: remoteRaw } = await execAsync(`git rev-parse origin/${branch}`, {
-      cwd: repoPath,
+    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath });
+    const { stdout: remoteRaw } = await execAsync(`git rev-parse origin/${runtime.branch}`, {
+      cwd: runtime.repoPath,
     });
     const remote = remoteRaw.trim();
 
@@ -36,8 +46,8 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
       current: shortSha(current),
       remote: shortSha(remote),
       hasUpdate: current !== remote,
-      branch,
-      repoPath,
+      branch: runtime.branch,
+      repoPath: runtime.repoPath,
     };
   } catch (error) {
     return {
@@ -45,32 +55,34 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
       current: "unknown",
       remote: "unknown",
       hasUpdate: false,
-      branch,
-      repoPath,
+      branch: runtime.branch,
+      repoPath: runtime.repoPath,
       message: error instanceof Error ? error.message : "Failed to check updates",
     };
   }
 }
 
 export async function applyUpdate() {
-  const repoPath = process.env.APP_REPO_PATH || process.cwd();
-  const branch = process.env.APP_UPDATE_BRANCH || "main";
+  const runtime = getUpdaterRuntime();
 
-  await execAsync(`git fetch origin ${branch}`, { cwd: repoPath });
-  await execAsync(`git reset --hard origin/${branch}`, { cwd: repoPath });
-  await execAsync("npm install", { cwd: repoPath });
-  await execAsync("npm run build", { cwd: repoPath });
+  await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath });
+  await execAsync(`git reset --hard origin/${runtime.branch}`, { cwd: runtime.repoPath });
+  await execAsync("npm install", { cwd: runtime.repoPath });
+  await execAsync("npm run build", { cwd: runtime.repoPath });
 
-  const restartCmd = process.env.APP_RESTART_COMMAND;
-  if (restartCmd) {
-    await execAsync(restartCmd, { cwd: repoPath });
+  if (runtime.restartCmd) {
+    await execAsync(runtime.restartCmd, { cwd: runtime.repoPath });
   }
 
   return {
     ok: true,
-    restarted: Boolean(restartCmd),
-    message: restartCmd
+    restarted: Boolean(runtime.restartCmd),
+    message: runtime.restartCmd
       ? "Update applied and restart command executed."
       : "Update applied. Restart your app process to use the new version.",
   };
+}
+
+export function getUpdaterToken() {
+  return getUpdaterRuntime().token;
 }

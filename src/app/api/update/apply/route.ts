@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
-import { applyUpdate } from "@/lib-updater";
+import { applyUpdate, getUpdaterToken } from "@/lib-updater";
 
 export async function POST(req: Request) {
-  const requiredToken = process.env.APP_UPDATE_TOKEN;
+  const requiredToken = getUpdaterToken();
   if (requiredToken) {
     const incomingToken = req.headers.get("x-update-token");
     if (incomingToken !== requiredToken) {

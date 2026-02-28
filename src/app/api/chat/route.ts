@@ -1,22 +1,24 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
-import { authOptions, authRuntime } from "@/lib-auth";
+import { getAuthOptions, getRuntimeAuth } from "@/lib-auth";
 
 export async function POST(req: Request) {
-  if (!authRuntime.devBypassLogin) {
-    const session = await getServerSession(authOptions);
+  const runtime = getRuntimeAuth();
+
+  if (!runtime.devBypassLogin) {
+    const session = await getServerSession(getAuthOptions());
     if (!session?.user) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
 
-  const apiKey = req.headers.get("x-openai-key") || process.env.OPENAI_API_KEY;
+  const apiKey = req.headers.get("x-openai-key") || runtime.openaiApiKey;
   if (!apiKey) {
     return NextResponse.json(
       {
         error:
-          "No OpenAI API key provided. Set OPENAI_API_KEY in .env or send x-openai-key header.",
+          "No OpenAI API key provided. Add it in onboarding or send x-openai-key header.",
       },
       { status: 400 },
     );
