@@ -147,6 +147,7 @@ export default function Home() {
   }
 
   async function startAutonomyRun() {
+    setAutonomyMessage("Starting autonomous run...");
     const res = await fetch("/api/autonomy/run", {
       method: "POST",
       headers: { "content-type": "application/json" },

@@ -22,9 +22,6 @@ export async function POST(req: Request) {
   const selectedDir = String(body.projectDir || "").trim();
   const allowOutsideStorage = Boolean(body.allowOutsideStorage);
 
-  if (!cfg.modes?.autonomousEnabled) {
-    return NextResponse.json({ ok: false, message: "Autonomous mode is disabled." }, { status: 400 });
-  }
   if (!goal) {
     return NextResponse.json({ ok: false, message: "Goal is required." }, { status: 400 });
   }
