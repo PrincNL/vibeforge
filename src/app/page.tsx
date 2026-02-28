@@ -75,6 +75,10 @@ export default function Home() {
   const [githubMessage, setGithubMessage] = useState("");
   const [autonomyGoal, setAutonomyGoal] = useState("");
   const [autonomyMessage, setAutonomyMessage] = useState("");
+  const [deviceSessionId, setDeviceSessionId] = useState("");
+  const [deviceUrl, setDeviceUrl] = useState("https://auth.openai.com/codex/device");
+  const [deviceCode, setDeviceCode] = useState("");
+  const [deviceMessage, setDeviceMessage] = useState("");
 
   const latestCodeBlock = useMemo(() => {
     const last = [...messages].reverse().find((m) => m.role === "assistant")?.content || "";
@@ -221,6 +225,42 @@ export default function Home() {
     setGithubMessage(`Pushed ${data.path} · commit ${data.commit}`);
   }
 
+  async function startDeviceConnect() {
+    setDeviceMessage("");
+    const res = await fetch("/api/oauth/openai/device/start", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      setDeviceMessage(data.message || "Connection failed, try again");
+      return;
+    }
+    setDeviceSessionId(data.id);
+    setDeviceUrl(data.url || "https://auth.openai.com/codex/device");
+    setDeviceCode(data.code || "");
+    setDeviceMessage("Open the link and enter the code, then click Check status.");
+    window.open(data.url || "https://auth.openai.com/codex/device", "_blank");
+  }
+
+  async function checkDeviceConnect() {
+    if (!deviceSessionId) return;
+    const res = await fetch(`/api/oauth/openai/device/status?id=${encodeURIComponent(deviceSessionId)}`, { cache: "no-store" });
+    const data = await res.json();
+    if (!data.ok) {
+      setDeviceMessage(data.message || "Connection failed, try again");
+      return;
+    }
+    if (data.status === "success") {
+      setDeviceMessage("Connected successfully.");
+      await refreshSetup();
+      return;
+    }
+    if (data.status === "failed" || data.status === "timeout") {
+      setDeviceMessage(data.error || "Connection failed, try again");
+      return;
+    }
+    setDeviceCode(data.code || deviceCode);
+    setDeviceMessage("Still waiting for login confirmation...");
+  }
+
   async function runAutonomy(execute: boolean) {
     setAutonomyMessage("");
     const res = await fetch("/api/autonomy/run", {
@@ -313,9 +353,15 @@ export default function Home() {
         <div className="w-full max-w-md rounded-2xl border border-zinc-800 bg-zinc-900 p-6 space-y-3">
           <h1 className="text-2xl font-semibold">VibeForge</h1>
           <p className="text-sm text-zinc-400">Connect your OpenAI account to continue.</p>
-          <a href="/api/oauth/openai/start" className="block w-full text-center rounded-xl bg-emerald-500 px-4 py-2 text-black font-medium">
+          <button onClick={startDeviceConnect} className="block w-full text-center rounded-xl bg-emerald-500 px-4 py-2 text-black font-medium">
             Connect with OpenAI
-          </a>
+          </button>
+          <div className="rounded-lg border border-zinc-800 p-3 text-xs text-zinc-300 space-y-2">
+            <div>1) Open: <a className="text-emerald-300 underline" href={deviceUrl} target="_blank" rel="noreferrer">{deviceUrl}</a></div>
+            <div>2) Enter code: <code className="text-emerald-300">{deviceCode || "(waiting...)"}</code></div>
+            <button onClick={checkDeviceConnect} className="rounded border border-zinc-700 px-2 py-1">Check status</button>
+            {deviceMessage && <div>{deviceMessage}</div>}
+          </div>
         </div>
       </main>
     );
