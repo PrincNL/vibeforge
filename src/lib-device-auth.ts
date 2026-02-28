@@ -10,10 +10,27 @@ type Session = {
   error?: string;
   createdAt: number;
   process?: ReturnType<typeof spawn>;
+  outputBuffer?: string;
 };
 
 const sessions = new Map<string, Session>();
 const TTL_MS = 2 * 60 * 1000;
+
+function stripAnsi(input: string) {
+  return input.replace(/\x1B\[[0-9;]*[A-Za-z]/g, "").replace(/\x1B\][^\x07]*\x07/g, "");
+}
+
+function extractDeviceCode(text: string): string | null {
+  const cleaned = stripAnsi(text);
+
+  const explicitMatch = cleaned.match(/one-time code[^\n]*\n\s*([A-Z0-9]{4}-[A-Z0-9]{4,6}|[A-Z0-9]{9})/i);
+  if (explicitMatch?.[1]) return explicitMatch[1].toUpperCase();
+
+  const genericMatch = cleaned.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4,6}|[A-Z0-9]{9})\b/);
+  if (genericMatch?.[1]) return genericMatch[1].toUpperCase();
+
+  return null;
+}
 
 function cleanup() {
   const now = Date.now();
@@ -49,7 +66,7 @@ export function startDeviceAuth() {
   cleanup();
 
   const id = randomUUID();
-  const sess: Session = { id, status: "pending", createdAt: Date.now() };
+  const sess: Session = { id, status: "pending", createdAt: Date.now(), outputBuffer: "" };
   sessions.set(id, sess);
 
   if (!isCodexAvailable()) {
@@ -67,15 +84,17 @@ export function startDeviceAuth() {
   sess.process = child;
 
   const onData = (chunk: Buffer) => {
-    const text = chunk.toString("utf8");
+    const text = stripAnsi(chunk.toString("utf8"));
+    sess.outputBuffer = `${sess.outputBuffer || ""}${text}`.slice(-12000);
 
-    const urlMatch = text.match(/https:\/\/auth\.openai\.com\/codex\/device/);
-    if (urlMatch) sess.url = "https://auth.openai.com/codex/device";
+    if ((sess.outputBuffer || "").includes("https://auth.openai.com/codex/device")) {
+      sess.url = "https://auth.openai.com/codex/device";
+    }
 
-    const codeMatch = text.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b/);
-    if (codeMatch) sess.code = codeMatch[1];
+    const code = extractDeviceCode(sess.outputBuffer || text);
+    if (code) sess.code = code;
 
-    if (text.includes("Enable device code authorization for Codex in ChatGPT Security Settings")) {
+    if ((sess.outputBuffer || "").includes("Enable device code authorization for Codex in ChatGPT Security Settings")) {
       sess.status = "failed";
       sess.error =
         "Enable device code authorization in ChatGPT Security Settings first, then click Connect again.";
