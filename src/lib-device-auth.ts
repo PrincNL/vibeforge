@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { loadConfig, saveConfig } from "@/lib-config";
 
@@ -19,7 +19,9 @@ function cleanup() {
   const now = Date.now();
   for (const [id, s] of sessions) {
     if (now - s.createdAt > TTL_MS) {
-      try { s.process?.kill(); } catch {}
+      try {
+        s.process?.kill();
+      } catch {}
       sessions.delete(id);
     }
   }
@@ -37,31 +39,63 @@ function markConnected() {
   });
 }
 
+function isCodexAvailable() {
+  const check = process.platform === "win32" ? "where" : "which";
+  const res = spawnSync(check, ["codex"], { stdio: "ignore", shell: true });
+  return res.status === 0;
+}
+
 export function startDeviceAuth() {
   cleanup();
+
   const id = randomUUID();
   const sess: Session = { id, status: "pending", createdAt: Date.now() };
   sessions.set(id, sess);
 
+  if (!isCodexAvailable()) {
+    sess.status = "failed";
+    sess.error =
+      "Codex CLI not found in PATH. Install with: npm i -g @openai/codex, then restart VibeForge.";
+    return { id: sess.id, url: "https://auth.openai.com/codex/device", code: "" };
+  }
+
   const child = spawn("codex", ["login", "--device-auth"], {
     stdio: ["ignore", "pipe", "pipe"],
     env: process.env,
+    shell: process.platform === "win32",
   });
   sess.process = child;
 
   const onData = (chunk: Buffer) => {
     const text = chunk.toString("utf8");
+
     const urlMatch = text.match(/https:\/\/auth\.openai\.com\/codex\/device/);
     if (urlMatch) sess.url = "https://auth.openai.com/codex/device";
 
-    const codeMatch = text.match(/\b([A-Z0-9]{4}-[A-Z0-9]{5,6})\b/);
+    const codeMatch = text.match(/\b([A-Z0-9]{4}-[A-Z0-9]{4,6})\b/);
     if (codeMatch) sess.code = codeMatch[1];
+
+    if (text.includes("Enable device code authorization for Codex in ChatGPT Security Settings")) {
+      sess.status = "failed";
+      sess.error =
+        "Enable device code authorization in ChatGPT Security Settings first, then click Connect again.";
+      try {
+        child.kill();
+      } catch {}
+    }
   };
 
   child.stdout.on("data", onData);
   child.stderr.on("data", onData);
 
+  child.on("error", (err) => {
+    sess.status = "failed";
+    sess.error = err.message;
+  });
+
   child.on("exit", (code) => {
+    if (sess.status === "failed") return;
+
     if (code === 0) {
       sess.status = "success";
       markConnected();
@@ -74,12 +108,18 @@ export function startDeviceAuth() {
   setTimeout(() => {
     if (sess.status === "pending") {
       sess.status = "timeout";
-      sess.error = "Device auth timed out";
-      try { child.kill(); } catch {}
+      sess.error = "Connection timed out after 60 seconds. Try again.";
+      try {
+        child.kill();
+      } catch {}
     }
   }, 60_000);
 
-  return { id: sess.id, url: sess.url || "https://auth.openai.com/codex/device", code: sess.code || "" };
+  return {
+    id: sess.id,
+    url: sess.url || "https://auth.openai.com/codex/device",
+    code: sess.code || "",
+  };
 }
 
 export function getDeviceAuthStatus(id: string) {
