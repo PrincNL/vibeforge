@@ -2,11 +2,29 @@ import OpenAI from "openai";
 import { NextResponse } from "next/server";
 import { loadConfig } from "@/lib-config";
 import { promisify } from "node:util";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 const execFileAsync = promisify(execFile);
+
+function resolveCodexCommand(): { cmd: string; argsPrefix: string[] } | null {
+  const custom = process.env.CODEX_CLI_PATH;
+  if (custom) return { cmd: custom, argsPrefix: [] };
+
+  const finder = process.platform === "win32" ? "where" : "which";
+  const found = spawnSync(finder, ["codex"], { encoding: "utf8", shell: process.platform === "win32" });
+  if (found.status === 0 && found.stdout) {
+    const first = found.stdout.split(/\r?\n/).find(Boolean)?.trim();
+    if (first) return { cmd: first, argsPrefix: [] };
+  }
+
+  // fallback without global install
+  return {
+    cmd: process.platform === "win32" ? "npx.cmd" : "npx",
+    argsPrefix: ["-y", "@openai/codex"],
+  };
+}
 
 async function runViaCodex(prompt: string, reasoning: string) {
   const outFile = path.join("/tmp", `vibeforge-codex-${Date.now()}.txt`);
@@ -18,10 +36,13 @@ async function runViaCodex(prompt: string, reasoning: string) {
     high: "high",
   };
 
-  // codex CLI uses account auth (device login)
+  const resolved = resolveCodexCommand();
+  if (!resolved) throw new Error("Codex CLI not found. Install with: npm i -g @openai/codex");
+
   await execFileAsync(
-    "codex",
+    resolved.cmd,
     [
+      ...resolved.argsPrefix,
       "exec",
       "--skip-git-repo-check",
       "-m",
@@ -32,7 +53,7 @@ async function runViaCodex(prompt: string, reasoning: string) {
       outFile,
       prompt,
     ],
-    { timeout: 180000 },
+    { timeout: 180000, shell: process.platform === "win32" },
   );
 
   const text = await fs.readFile(outFile, "utf8");

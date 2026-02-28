@@ -70,6 +70,18 @@ export default function Home() {
     }
   }
 
+  async function applyUpdate() {
+    setUpdateMessage("");
+    const res = await fetch("/api/update/apply", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      setUpdateMessage(data.message || "Update failed");
+      return;
+    }
+    setUpdateMessage(data.message || "Updated");
+    await checkUpdates();
+  }
+
   async function checkUpdates() {
     const res = await fetch("/api/update/status", { cache: "no-store" });
     const data = await res.json();
@@ -277,6 +289,10 @@ export default function Home() {
               <span className="text-zinc-400">{updateStatus?.hasUpdate ? "available" : "up to date"}</span>
             </div>
             <div className="text-zinc-400">{updateStatus?.current || "..."} → {updateStatus?.remote || "..."}</div>
+            <div className="flex gap-2">
+              <button onClick={checkUpdates} className="rounded-lg border border-white/20 px-2 py-1 soft-hover">Check</button>
+              <button onClick={applyUpdate} className="rounded-lg bg-emerald-400 text-black px-2 py-1 soft-hover">Update now</button>
+            </div>
             {updateMessage && <div>{updateMessage}</div>}
           </div>
         </aside>
