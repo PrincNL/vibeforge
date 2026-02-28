@@ -28,16 +28,23 @@ function getUpdaterRuntime() {
   };
 }
 
+const cleanEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  NODE_ENV: "production" as const,
+  NEXT_TELEMETRY_DISABLED: "1",
+};
+
 export async function getUpdateStatus(): Promise<UpdateStatus> {
   const runtime = getUpdaterRuntime();
 
   try {
-    const { stdout: currentRaw } = await execAsync("git rev-parse HEAD", { cwd: runtime.repoPath });
+    const { stdout: currentRaw } = await execAsync("git rev-parse HEAD", { cwd: runtime.repoPath, env: cleanEnv });
     const current = currentRaw.trim();
 
-    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath });
+    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath, env: cleanEnv });
     const { stdout: remoteRaw } = await execAsync(`git rev-parse origin/${runtime.branch}`, {
       cwd: runtime.repoPath,
+      env: cleanEnv,
     });
     const remote = remoteRaw.trim();
 
@@ -65,13 +72,25 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
 export async function applyUpdate() {
   const runtime = getUpdaterRuntime();
 
-  await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath });
-  await execAsync(`git reset --hard origin/${runtime.branch}`, { cwd: runtime.repoPath });
-  await execAsync("npm install", { cwd: runtime.repoPath });
-  await execAsync("npm run build", { cwd: runtime.repoPath });
+  try {
+    await execAsync(`git fetch origin ${runtime.branch}`, { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync(`git reset --hard origin/${runtime.branch}`, { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync("npm install", { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync("npm run build", { cwd: runtime.repoPath, env: cleanEnv });
+  } catch (firstError) {
+    // Self-heal attempt: clear install state and retry cleanly
+    await execAsync("npm cache verify", { cwd: runtime.repoPath, env: cleanEnv }).catch(() => {});
+    await execAsync("npm install --force", { cwd: runtime.repoPath, env: cleanEnv });
+    await execAsync("npm run build", { cwd: runtime.repoPath, env: cleanEnv });
+
+    if (firstError instanceof Error) {
+      // keep first error context in message trail when success after retry
+      console.warn("[updater] First attempt failed, recovered on retry:", firstError.message);
+    }
+  }
 
   if (runtime.restartCmd) {
-    await execAsync(runtime.restartCmd, { cwd: runtime.repoPath });
+    await execAsync(runtime.restartCmd, { cwd: runtime.repoPath, env: cleanEnv });
   }
 
   return {

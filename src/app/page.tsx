@@ -44,6 +44,7 @@ export default function Home() {
   const [deviceUrl, setDeviceUrl] = useState("https://auth.openai.com/codex/device");
   const [deviceCode, setDeviceCode] = useState("");
   const [deviceMessage, setDeviceMessage] = useState("");
+  const [agentTrace, setAgentTrace] = useState<string[]>([]);
   const [autonomyGoal, setAutonomyGoal] = useState("");
   const [autonomyMessage, setAutonomyMessage] = useState("");
   const [autonomousOn, setAutonomousOn] = useState(false);
@@ -176,6 +177,7 @@ export default function Home() {
     setMessages(next);
     setPrompt("");
     setLoading(true);
+    setAgentTrace(["Analyzing request", "Planning approach", "Preparing execution"]);
     await persist("user", userText);
 
     try {
@@ -189,6 +191,7 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed");
+      setAgentTrace((t)=>[...t, "Generating response", "Finalizing output"]);
       setMessages((prev) => [...prev, { role: "assistant", content: data.text }]);
       await persist("assistant", data.text);
       await refreshThreads();
@@ -198,6 +201,7 @@ export default function Home() {
       await persist("assistant", msg);
     } finally {
       setLoading(false);
+      setTimeout(()=>setAgentTrace([]), 1200);
     }
   }
 
